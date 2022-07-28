@@ -1,0 +1,174 @@
+(%ifndef* NF-TYPE
+  (%defconstant NF-TYPE GCC)) ; one of (GCC LW-SC CL-SC XCC XCCCL)
+(%include "rule/tcell-setrule.sh")
+
+(c-exp "#include <stdio.h>")
+(c-exp "#include <stdlib.h>")
+(c-exp "#include <time.h>")
+(c-exp "#include <sys/time.h>")
+
+;; # include <stdio.h>
+;; # include <stdlib.h>
+;; # include <time.h>
+;; # include <sys/time.h>
+
+(%defconstant MATRIX_SIZE 1000)
+;; #define MATRIX_SIZE 4000
+
+
+(def (csym::get_wall_time)(fn double)
+(decl time (struct timeval))
+(if (csym::gettimeofday (ptr time) NULL)
+    (return 0)
+)
+(return (+ (cast double (fref time tv-sec)) (* (cast double (fref time tv-usec)) 0.000001)))
+)
+
+;; double get_wall_time(){
+;;   struct timeval time;
+;;   if (gettimeofday(&time,NULL)){ 
+;;     return 0;
+;;   }
+;;   return (double)time.tv_sec + (double)time.tv_usec * .000001;
+;; }
+
+(def (csym::matgen a n)(fn void (ptr float) int)
+(def i int)
+(def j int)
+(for ((= i 0)(< i n)(inc i))
+    (for ((= j 0)(< j n)(inc j))
+        (= (aref a (+ (* i n) j)) (+(/ (csym::rand) RAND_MAX) (/ (csym::rand) (* RAND_MAX RAND_MAX))))
+    )))
+
+(def(csym::mm a b c n) (fn void (ptr float) (ptr float) (ptr float) int)
+(defs int i j k)
+;; (decl c (ptr float))
+;(def t double 0)
+
+(for ((= i 0) (< i n) (inc i))
+    (for ((= j 0) (< j n) (inc j))
+        (def t double 0)
+        (for ((= k 0)(< k n)(inc k))
+            (+= t (* (aref a (+ (* i n) k)) (aref b (+ (* k n) j))) )
+        )
+        (= (aref c (+ (* i n) j)) t)
+    )
+))
+
+
+(def (task mm-start))
+
+(def (task-body mm-start)
+
+    (defs (ptr float) a b c)
+    (def n int MATRIX_SIZE)
+
+    (= a (cast (ptr float) (csym::malloc (* (sizeof float) (* n n)))))
+    (= b (cast (ptr float) (csym::malloc (* (sizeof float) (* n n)))))
+    (= c (cast (ptr float) (csym::malloc (* (sizeof float) (* n n)))))
+
+    (csym::srand 0)
+
+    (csym::matgen a n)
+    (csym::matgen b n)
+
+    (def start double (csym::get_wall_time))
+    (csym::mm a b c n)
+    (def end double (csym::get_wall_time))
+
+    (def usetime double (- end start))
+    (csym::fprintf stderr "usetime = %lf~%" usetime)
+
+)
+
+
+;; //生成随机矩阵
+;; void matgen(float* a, int n)
+;; {
+;;     int i, j;
+
+;;     for (i = 0; i < n; i++)
+;;     {
+;;         for (j = 0; j < n; j++)
+;;         {
+
+;;             a[i * n + j] = (float)rand() / RAND_MAX + (float)rand() / (RAND_MAX * RAND_MAX);
+
+;;         }
+;;     }
+;; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+;; int main()
+;; {
+
+;;     //定义矩阵
+;;     float *a, *b, *c;
+
+;;     int n = MATRIX_SIZE;
+
+;;     //分配内存
+;;     a = (float*)malloc(sizeof(float)* n * n); 
+;;     b = (float*)malloc(sizeof(float)* n * n); 
+;;     c = (float*)malloc(sizeof(float)* n * n); 
+    
+;;     //设置随机数种子
+;;     srand(0);
+
+;;     //随机生成矩阵
+;;     matgen(a, n);
+;;     matgen(b, n);
+
+;;     double start = get_wall_time();
+
+;;     ;;   //矩阵乘法，存入矩阵c
+;;     ;; for (int i = 0; i < n; i++)
+;;     ;; {
+;;     ;;     for (int j = 0; j < n; j++)
+;;     ;;     { 
+;;     ;;         double t = 0;
+
+;;     ;;         for (int k = 0; k < n; k++)
+;;     ;;         { 
+
+;;     ;;             t += a[i * n + k] * b[k * n + j]; 
+
+;;     ;;         } 
+
+;;     ;;         c[i * n + j] = t;
+;;     ;;     }
+;;     ;; }
+
+;;     double end = get_wall_time();
+
+;;     double usetime = end - start;
+
+;;     printf("usetime = %lf\n", usetime);
+
+
+;; //    //output
+;; //     for (int i = 0; i < n; i++)
+;; //     {
+;; //         for (int j = 0; j < n; j++)
+;; //         { 
+;; //             printf("%f ", c[i * n + j]);
+;; //         } 
+;; //         printf("\n");
+;; //     }
+    
+;;     return 0;
+
+;; }

@@ -1,0 +1,279 @@
+(%ifndef* NF-TYPE
+  (%defconstant NF-TYPE GCC)) ; one of (GCC LW-SC CL-SC XCC XCCCL)
+(%include "rule/tcell-setrule.sh")
+
+(c-exp "#include <stdio.h>")
+(c-exp "#include <stdlib.h>")
+(c-exp "#include <math.h>")
+(c-exp "#include <time.h>")
+
+(%defconstant total 4)
+;; #define total 4       //15
+(%defconstant MATRIX_SIZE 1024)
+
+(decl (csym::strassenMul X Y Z m) (fn void (ptr double) (ptr double) (ptr double) int))
+(decl (csym::matMul A B C n) (fn void (ptr double) (ptr double) (ptr double) int))
+(decl (csym::matAdd A B C m) (fn void (ptr double) (ptr double) (ptr double) int))
+(decl (csym::matSub A B C m) (fn void (ptr double) (ptr double) (ptr double) int))
+(decl (csym::get-wall-time) (fn double void))
+
+(def (enum array) x11 x12 x21 x22 y11 y12 y21 y22
+       P1 P2 P3 P4 P5 P6 P7 C11 C12 C21 C22
+       S1 S2 S3 S4 S5 S6 S7 S8 S9 S10 S11 S12 S13 S14 arrs)
+
+(def idx int 0)
+;; int idx = 0;
+
+(def (task mm-start))
+
+(def (task-body mm-start)
+    (defs int N i j)
+    (def count int 0)
+    (defs clock_t start end)
+    (defs double start2 end2)
+    (def elapsed double)
+
+    (def tnaive (array double total))
+    (def tstrassen (array double total))
+    (defs (ptr double) X Y Z W A B C)
+    
+    (csym::fprintf stderr "-------------------------------------------------------------------------~%")
+
+    (for ((= count 0) (< count total) (inc count))
+        (= N (cast int (csym::pow 2 count)))
+        (csym::fprintf stderr "Matrix size = %2d    " N) 
+        (= X (csym::malloc (* (sizeof double) (* N N))))
+        (= Y (csym::malloc (* (sizeof double) (* N N))))
+        (= Z (csym::malloc (* (sizeof double) (* N N))))
+        (= W (csym::malloc (* (sizeof double) (* N N))))
+        (if (or (== X NULL) (or (== Y NULL) (or (== Z NULL) (== W NULL))))
+            (begin 
+                (csym::fprintf stderr "Out of memory (1)~%")
+                (csym::exit 1)
+            )
+        ) 
+        (csym::srand 0)
+        ;(csym::srand (cast unsigned (csym::time NULL)))      
+       (for ((= i 0) (< i (* N N)) (inc i))
+            (= (aref X i) (/ (csym::rand) (+ RAND_MAX 1.0)))
+            (= (aref Y i) (/ (csym::rand) (+ RAND_MAX 1.0)))
+            )
+        (= start (csym::clock))
+        (csym::matMul X Y W N)
+        (csym::fprintf stderr "N = %2d    " N) 
+        (= end (csym::clock))
+        (= elapsed (/ (* 100 (cast double (- end start))) CLOCKS_PER_SEC))
+        (csym::fprintf stderr "elapsed = %5.4f    " elapsed) 
+        (= (aref tnaive count) elapsed)
+        (csym::fprintf stderr "naive = %5.4f    " (aref tnaive count))
+        (= start (csym::clock))
+        (csym::strassenMul X Y Z N)
+        (csym::free W)
+        (csym::free Z)
+        (csym::free Y)
+        (csym::free X)
+        (= end (csym::clock))
+        (= elapsed (/ (* 100 (cast double (- end start))) CLOCKS_PER_SEC))
+        (= (aref tstrassen count) elapsed)
+        (csym::fprintf stderr "strassen = %5.4f~%" (aref tstrassen count))
+    )    
+
+    (csym::fprintf stderr "-------------------------------------------------------------------------~%~%~%")
+
+    (while (and (<= (aref tnaive (+ idx 1)) (aref tstrassen (+ idx 1))) (< idx 14)) 
+        (inc idx))
+
+
+    (csym::fprintf stderr "Optimum input size to switch from normal multiplication to Strassen's is above %d~%~%" idx) 
+
+    
+    ;; (csym::fprintf stderr "Please enter the size of array as a power of 2\n")
+    ;; (csym::scanf "%d" (ptr N))
+    (= N MATRIX_SIZE)
+    (= A (csym::malloc (* (sizeof double) (* N N))))
+    (= B (csym::malloc (* (sizeof double) (* N N))))
+    (= C (csym::malloc (* (sizeof double) (* N N))))
+    (if (or (== A NULL) (or (== B NULL) (== C NULL)))
+        (begin 
+            (csym::fprintf stderr "Out of memory (2)~%")
+            (csym::exit 1)
+            ;; (return 1)
+            )
+    ) 
+    (csym::srand 0)
+    ;(csym::srand (cast unsigned (csym::time NULL)))
+    (for ((= i 0) (< i (* N N)) (inc i))
+        (= (aref A i) (/ (csym::rand) (+ RAND_MAX 1.0)))
+        (= (aref B i) (/ (csym::rand) (+ RAND_MAX 1.0)))
+    )
+
+    ;; (csym::fprintf stderr "------------------- Input Matrices A and B ---------------------------~%~%")
+    ;; (for ((= i 0) (< i N) (inc i))
+    ;;     (for ((= j 0) (< j N) (inc j))
+    ;;         (csym::fprintf stderr "%5.4f  " (aref A (+ (* i N) j))))
+    ;;     (csym::fprintf stderr "~%"))
+    ;; (csym::fprintf stderr "~%")  
+
+    ;; (for ((= i 0) (< i N) (inc i))
+    ;;     (for ((= j 0) (< j N) (inc j))
+    ;;         (csym::fprintf stderr "%5.4f  " (aref B (+ (* i N) j))))
+    ;;     (csym::fprintf stderr "~%"))
+    ;; (csym::fprintf stderr "~%")   
+    
+
+    (csym::fprintf stderr "~%------- Output matrix by Strassen's method after optimization -----------~%~%")
+    (= start2 (csym::get-wall-time))
+    (csym::strassenMul A B C N) 
+    (= end2 (csym::get-wall-time))
+    (= elapsed (- end2 start2))
+    (= (aref tstrassen N) elapsed)
+    (csym::fprintf stderr "strassen = %5.4f~%" (aref tstrassen N))
+
+
+    ;; (for ((= i 0) (< i N) (inc i))
+    ;;     (for ((= j 0) (< j N) (inc j))      
+    ;;         (csym::fprintf stderr "%5.4f  " (aref C (+ (* i N) j))))
+    ;;     (csym::fprintf stderr "~%"))
+    (csym::free C)
+    (csym::free B)
+    (csym::free A) 
+)   
+
+(def (csym::strassenMul X Y Z m)(fn void (ptr double) (ptr double) (ptr double) int)
+(def row int 0)
+(def col int 0)
+(def n int (/ m 2))
+(def i int 0)
+(def j int 0)
+(def arr (array (ptr double) arrs))
+
+    (if (<= m idx)
+    (begin
+        (csym::matMul X Y Z m)
+        (return)))
+
+    (if (== m 1)
+    (begin
+        (= (mref Z) (* (mref X) (mref Y)))
+        (return)))  
+
+    (for ((= i 0) (< i arrs) (inc i))
+    (= (aref arr i) (cast (ptr double) (csym::malloc (* (sizeof double) (* n n)))))
+    (if (== (aref arr i) NULL)
+        (begin
+            (csym::fprintf stderr "Out of memory (1) ~%")  
+            (csym::exit 1)                                        
+        )))
+    
+    (for ((exps (= row 0) (= i 0)) (< row n) (exps (inc row) (inc i)))
+        (for ((exps (= col 0) (= j 0)) (< col n) (exps (inc col) (inc j)))
+            (= (aref arr x11 (+ (* i n) j)) (aref X (+ (* row m) col)))
+            (= (aref arr y11 (+ (* i n) j)) (aref Y (+ (* row m) col))))
+        (for ((exps (= col n) (= j 0)) (< col m) (exps (inc col) (inc j)))
+            (= (aref arr x12 (+ (* i n) j)) (aref X (+ (* row m) col)))
+            (= (aref arr y12 (+ (* i n) j)) (aref Y (+ (* row m) col))))    
+    )
+
+    (for ((exps (= row n) (= i 0)) (< row m) (exps (inc row) (inc i)))
+        (for ((exps (= col 0) (= j 0)) (< col n) (exps (inc col) (inc j)))
+            (= (aref arr x21 (+ (* i n) j)) (aref X (+ (* row m) col)))
+            (= (aref arr y21 (+ (* i n) j)) (aref Y (+ (* row m) col))))
+        (for ((exps (= col n) (= j 0)) (< col m) (exps (inc col) (inc j)))
+            (= (aref arr x22 (+ (* i n) j)) (aref X (+ (* row m) col)))
+            (= (aref arr y22 (+ (* i n) j)) (aref Y (+ (* row m) col))))    
+    )
+
+    (csym::matAdd (aref arr x11) (aref arr x22) (aref arr S1) n)
+    (csym::matAdd (aref arr y11) (aref arr y22) (aref arr S2) n)
+    (csym::strassenMul (aref arr S1) (aref arr S2) (aref arr P1) n)
+
+    (csym::matAdd (aref arr x21) (aref arr x22) (aref arr S3) n)
+    (csym::strassenMul (aref arr S3) (aref arr y11) (aref arr P2) n)
+
+    (csym::matSub (aref arr y21) (aref arr y22) (aref arr S4) n)
+    (csym::strassenMul (aref arr x11) (aref arr S4) (aref arr P3) n)
+    
+    (csym::matSub (aref arr y21) (aref arr y11) (aref arr S5) n)
+    (csym::strassenMul (aref arr x22) (aref arr S5) (aref arr P4) n)
+   
+    (csym::matAdd (aref arr x11) (aref arr x12) (aref arr S6) n)
+    (csym::strassenMul (aref arr S6) (aref arr y22) (aref arr P5) n)
+
+    (csym::matSub (aref arr x21) (aref arr x11) (aref arr S7) n)
+    (csym::matAdd (aref arr y11) (aref arr y12) (aref arr S8) n)
+    (csym::strassenMul (aref arr S7) (aref arr S8) (aref arr P6) n)
+   
+    (csym::matSub (aref arr x12) (aref arr x22) (aref arr S9) n)
+    (csym::matAdd (aref arr y21) (aref arr y22) (aref arr S10) n)
+    (csym::strassenMul (aref arr S9) (aref arr S10) (aref arr P7) n)
+   
+    (csym::matAdd (aref arr P1) (aref arr P4) (aref arr S11) n)
+    (csym::matSub (aref arr S11) (aref arr P5) (aref arr S12) n)
+    (csym::matAdd (aref arr S12) (aref arr P7) (aref arr C11) n)
+   
+    (csym::matAdd (aref arr P3) (aref arr P5) (aref arr C12) n)
+    
+    (csym::matAdd (aref arr P2) (aref arr P4) (aref arr C21) n)
+   
+    (csym::matAdd (aref arr P1) (aref arr P3) (aref arr S13) n)
+    (csym::matSub (aref arr S13) (aref arr P2) (aref arr S14) n)
+    (csym::matAdd (aref arr S14) (aref arr P6) (aref arr C22) n)
+
+    (for ((exps (= row 0) (= i 0)) (< row n) (exps (inc row) (inc i)))
+        (for ((exps (= col 0) (= j 0)) (< col n) (exps (inc col) (inc j)))
+            (= (aref Z (+ (* row m) col)) (aref arr C11 (+ (* i n) j))))
+        (for ((exps (= col n) (= j 0)) (< col m) (exps (inc col) (inc j)))
+            (= (aref Z (+ (* row m) col)) (aref arr C12 (+ (* i n) j))))    
+    )
+    (for ((exps (= row n) (= i 0)) (< row m) (exps (inc row) (inc i)))
+        (for ((exps (= col 0) (= j 0)) (< col n) (exps (inc col) (inc j)))
+            (= (aref Z (+ (* row m) col)) (aref arr C21 (+ (* i n) j))))
+        (for ((exps (= col n) (= j 0)) (< col m) (exps (inc col) (inc j)))
+            (= (aref Z (+ (* row m) col)) (aref arr C22 (+ (* i n) j))))    
+    )
+    
+    
+    (for ((= i 0) (< i arrs) (inc i))
+        (csym::free (aref arr i))
+    ))
+
+(def (csym::matMul A B C n)(fn void (ptr double) (ptr double) (ptr double) int)
+(def row int 0)
+(def col int 0)
+(def k int 0)
+(def i int 0)
+(def j int 0)
+(def sum double)
+
+    (for ((= i 0) (< i n) (inc i))
+        (for ((= j 0) (< j n) (inc j))
+            (= sum 0.0)
+            (for ((= k 0) (< k n) (inc k))
+                (+= sum (* (aref A (+ (* i n) k)) (aref B (+ (* k n) j))))
+            )
+            (= (aref C (+ (* i n) j)) sum)
+        )))            
+
+(def (csym::matAdd A B C m) (fn void (ptr double) (ptr double) (ptr double) int)
+(def row int 0)
+(def col int 0)
+
+    (for ((= row 0) (< row m) (inc row))
+        (for ((= col 0) (< col m) (inc col))
+            (= (aref C (+ (* row m) col)) (+ (aref A (+ (* row m) col)) (aref B (+ (* row m) col))))
+        )))
+           
+
+(def (csym::matSub A B C m)(fn void (ptr double) (ptr double) (ptr double) int)
+(def row int 0)
+(def col int 0)
+
+    (for ((= row 0) (< row m) (inc row))
+        (for ((= col 0) (< col m) (inc col))
+            (= (aref C (+ (* row m) col)) (- (aref A (+ (* row m) col)) (aref B (+ (* row m) col))))
+        )))
+
+(def (csym::get-wall-time) (fn double void)
+    (decl time (struct timeval))
+    (if (csym::gettimeofday (ptr time) NULL) (begin (return 0)))
+    (return (+ (cast double (fref time tv-sec)) (* (cast double (fref time tv-usec)) 0.000001))))

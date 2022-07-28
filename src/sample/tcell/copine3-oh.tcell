@@ -66,7 +66,6 @@
 ;;; Use "popcount (SSE4.2)"
 (%defconstant USE-SSE 0)
 
-
 ;;; Max # of workers
 (%defconstant NUM-WORKERS 68)
 
@@ -89,23 +88,15 @@
 (%defconstant DEBUG-COPY 0) ; flag to output copy file
 (%defconstant DEBUG-ENTY 0) ; flag to output table entry file
 
-;;;Mod: For function CtoC_bit
-(%defconstant SHIFT 6)
-(%defconstant MASK 63)
-(%defconstant C-BIT-SIZE 243)
-
 ;;; Typedef
 (deftype set uint64_t)        ; bitset
 (deftype vtx uint32_t)        ; vertex
 (deftype task-id __uint128_t) ; task ID
 
-;;; Mod: Structure of ITnode　
+;;; Structure of ITnode
 (def (struct --ITnode)
   (decl minID task-id)                 ; task ID
   (decl maxID task-id)                 ; task ID
-  ;(decl C (ptr vtx))                  ; candidates
-  (decl C_bit (array set C-BIT-SIZE))  ; bitwise of candidates
-  (decl numC int)
   (decl item (array set BIT-ITEM))     ; itemset
   (decl prev (ptr (struct --ITnode)))  ; pointer to the previous node
   (decl next (ptr (struct --ITnode)))) ; pointer to the next node
@@ -172,6 +163,7 @@
 (decl tableReference (array uint64_t NUM-WORKERS))
 (decl tableMutexTrylock (array uint64_t NUM-WORKERS))
 (decl tableMutexLocked (array uint64_t NUM-WORKERS))
+(def th_v int 2) ; threshold of edges from this vertex (vDegree); mod
 
 ;;; Item Table
 (def vItemTable (ptr ITlist))
@@ -180,39 +172,6 @@
 (decl mutex (array pthread_mutex_t V-SIZE))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;;; Mod: Function: issubset - check the value of C1_bit C2_bit,and result
-(def (csym::issubset C1_bit C2_bit) (fn int (ptr set) (ptr set))
-  (def k int)
-  (def m int 0)
-  ;(def C1_bit (ptr set)) 
-  ;(def C2_bit (ptr set)) 
-
-  ;(csym::CtoC_bit C1 C1_bit numC1)
-  ;(csym::CtoC_bit C2 C2_bit numC2)
-
-  (for ((= k 0) (< k 243) (inc k))
-    (if (== (cast set (bit-and (aref C1_bit k) (aref C2_bit k))) (aref C1_bit k))
-      (inc m)))
-  (if (== m 243)
-    (return 1)
-    (return 0)))
-
-;;; Mod: Function: init_bitarray
-(def (csym::init_bitarray size) (fn (ptr set) int)
-    (def tmp (ptr set) (cast (ptr set) (csym::malloc (* (sizeof set) (+ (/ size 64) 1)) )))
-    (csym::memset tmp 0 (+ (/ size 64) 1))
-    (return tmp))
-
-;;; Mod: Function: CtoC_bit
-(def (csym::CtoC_bit C C_bit numC) (fn void (ptr vtx) (array set) int)
-    (= C_bit (csym::init_bitarray 15500))
-    (def i int)
-    (for ((= i 0) (< i numC) (inc i)) 
-        (def num int (aref C i)) 
-        (bit-or= (aref C_bit (>> num SHIFT)) (<< 1 (bit-and num MASK)))
-    )
-)
 
 ;;; Function: getrusageSec - have the user time
 (def (csym::getrusageSec) (fn double void)
@@ -309,60 +268,17 @@
   (= (fref dummyNode -> next) dummyNode)
   (= (fref dummyNode -> prev) dummyNode))
 
-
-;;;
-(def (task T-exploreCCIG)
-  (def minID task-id)
-  (def maxID task-id)
-  (def minC int)
-  (def maxC int)
-  (def v int)
-  (def itemSet (array set BIT-ITEM))
-  (def vTraversed (ptr int))
-  ;(def vItemTable (ptr ITlist))
-  (def C (ptr vtx))
-  (def numC int)
-  (def sizeOfC int)
-  ;Mod: add insert_C_bit into PTsk
-  (def insert_C_bit (array set C-BIT-SIZE)) 
-  ;(def numC_bit int)
-  ;(def sizeOfC_bit int) 
-  (def T (ptr vtx))
-  (def numT int)
-  (def sizeOfT int)
-  (def subgraph Glist)
-  (def treeDepth uint64_t)
-  (def numTraversed uint64_t)
-  (def numSubgraph int)
-  (def numSearch uint64_t)
-  (def numThreshold uint64_t)
-  (def numPruning int)
-  (def numTableReference uint64_t)
-  (def numMutexTrylock uint64_t)
-  (def numMutexLocked uint64_t))
-
 ;;; Function: insertITnodeAfter - insert a new ITnode after the pointer 'p'
-(def (csym::insertITnodeAfter list p pTsk minID maxID item) (fn void (ptr ITlist) 
-            (ptr ITnode) (ptr (struct T-exploreCCIG)) task-id task-id (array set))
+(def (csym::insertITnodeAfter list p minID maxID item) (fn void (ptr ITlist) (ptr ITnode) task-id task-id (array set))
   (decl i int)
   (def new (ptr ITnode) (csym::allocITnode))
   (def nxt (ptr ITnode) (fref p -> next))
-  (def C_bit (array set C-BIT-SIZE))
   (= (fref (fref p -> next) -> prev) new)
   (= (fref p -> next) new)
   (= (fref new -> minID) minID)
   (= (fref new -> maxID) maxID)
   (for ((= i 0) (< i BIT-ITEM) (inc i))
     (= (aref (fref new -> item) i) (aref item i)))
-  ;;; Mod: new code added here. copy the ｃ from pTsk.
-  ;(= (fref new -> C) (cast (ptr vtx) (csym::malloc (* (fref pTsk -> numC) (sizeof vtx)))));;allocate the memory for C
-  (= (fref new -> numC) (fref pTsk -> numC))  ;;set numC
-  ;(csym::memcpy new->C pTsk->C (* (sizeof vtx) pTsk->numC))  ;;copy from pTsk->C to ITnode->C
-  ;;; Mod: copy C_bit from pTsk.
-  ;(= (fref new -> C_bit) (cast (ptr set) (csym::malloc (* (sizeof set) (+ (/ size 64) 1)))))
-  (csym::CtoC_bit (fref pTsk -> C) C_bit (fref pTsk -> numC))
-  (csym::memcpy new->C_bit pTsk->insert_C_bit (* (sizeof set) C-BIT-SIZE)) 
-  
   (= (fref new -> prev) p)
   (= (fref new -> next) nxt)
   (= (fref list -> crnt) new))
@@ -372,11 +288,7 @@
   (= (fref (fref p -> prev) -> next) (fref p -> next))
   (= (fref (fref p -> next) -> prev) (fref p -> prev))
   (= (fref list -> crnt) (fref p -> prev))
-  ;;; Mod: new code added here
-  ;(csym::free p->C) ??
-  ;(csym::free p->C_bit)
   (csym::free p))
-
 
 ;;; Function: clearITlist - remove all ITnodes of ITlist
 (def (csym::clearITlist list) (fn void (ptr ITlist))
@@ -390,7 +302,7 @@
   (csym::free (fref list -> head))
   (= (fref list -> crnt) NULL)
   (= (fref list -> head) NULL))
-  
+
 ;;; Function: allocGnode - allocate a Gnode
 (def (csym::allocGnode) (fn (ptr Gnode))
   (return (cast (ptr Gnode) (csym::malloc(sizeof Gnode)))))
@@ -445,7 +357,32 @@
   (= (fref list -> head) NULL))
 
 
-
+;;;
+(def (task T-exploreCCIG)
+  (def minID task-id)
+  (def maxID task-id)
+  (def minC int)
+  (def maxC int)
+  (def v int)
+  (def itemSet (array set BIT-ITEM))
+  (def vTraversed (ptr int))
+  ;(def vItemTable (ptr ITlist))
+  (def C (ptr vtx))
+  (def numC int)
+  (def sizeOfC int)
+  (def T (ptr vtx))
+  (def numT int)
+  (def sizeOfT int)
+  (def subgraph Glist)
+  (def treeDepth uint64_t)
+  (def numTraversed uint64_t)
+  (def numSubgraph int)
+  (def numSearch uint64_t)
+  (def numThreshold uint64_t)
+  (def numPruning int)
+  (def numTableReference uint64_t)
+  (def numMutexTrylock uint64_t)
+  (def numMutexLocked uint64_t))
 
 ;;;Function: initExploreCCIG - 
 (def (initExploreCCIG traversed itemTable C T pTsk) (fn void (ptr int) (ptr ITlist) (ptr vtx) (ptr vtx) (ptr (struct T-exploreCCIG)))
@@ -467,12 +404,6 @@
   (= (fref pTsk -> numC) 0)
   (= (fref pTsk -> sizeOfC) 10000)
   (= (fref pTsk -> C) (cast (ptr vtx) (csym::malloc (* (fref pTsk ->  sizeOfC) (sizeof vtx)))))
-
-  ;; Mod: initialize C_bit
-  ;(= (fref pTsk -> numC_bit) 0)
-  ;(= (fref pTsk -> sizeOfC_bit) 243)
-  ;(= (fref pTsk -> C_bit) (cast (ptr set) (csym::malloc (* () (sizeof set))))) 
-
 
   ;; initialize T
   (= (fref pTsk -> numT) 0)
@@ -506,8 +437,7 @@
   (decl ITptr (ptr ITnode))              ; pointer to the ITnode
   (decl locked int)                      ; 
   (decl tp (array (struct timeval) 2))   ;
-  (decl tempTableReference uint64_t)
-  ;(decl tempC_bit (array set C-BIT-SIZE))  ; 
+  (decl tempTableReference uint64_t)     ; 
 
   ;; DFS
   (for ((= i minC) (< i maxC) (inc i))
@@ -532,8 +462,10 @@
         (if (>= commonNum th)
           (begin
             (= pruning 0)
-
-            ;; check that common-itemset is subset of item table
+            (if (>= (aref vDegree vv) th_v) ;; Mod
+              (begin
+            
+                        ;; check that common-itemset is subset of item table
             (%if* DEBUG-LOCK (begin
               (= locked 0)
               (csym::gettimeofday tp 0)
@@ -556,13 +488,13 @@
                   ;(+= timeMutexLocked (csym::elapsedTime tp (+ tp 1)))
                   ;(csym::fprintf fpLock "%f, %d~%" (csym::elapsedTime tp (+ tp 1)) locked)
                   ))))
-            (= ITptr (fref (fref (aref vItemTable vv) head) -> next)) 
+            (= ITptr (fref (fref (aref vItemTable vv) head) -> next))
             (%if* DEBUG-ENTY (begin
               (= tempTableReference (fref pTsk -> numTableReference))
               (csym::gettimeofday tp 0)))
             (while (!= ITptr (fref (aref vItemTable vv) head))
               (inc (fref pTsk -> numTableReference))
-              (if (<= (fref ITptr -> minID) (fref pTsk -> minID))   
+              (if (<= (fref ITptr -> minID) (fref pTsk -> minID))
                 (begin
                   (for ((= k 0) (= m 0) (< k BIT-ITEM) (inc k))
                     (if (== (cast set (bit-and (aref commonItem k) (aref (fref ITptr -> item) k))) (aref commonItem k))
@@ -578,6 +510,7 @@
               ;(csym::fprintf fpEnty "%f, %llu~%" (csym::elapsedTime tp (+ tp 1)) (- (fref pTsk -> numTableReference) tempTableReference))
               ))
             ;(csym::pthread_mutex_unlock (ptr (aref mutex vv)))
+            )) ;mod
 
             ;; if common-itemset is not subset of item table, then
             (if (not pruning)
@@ -607,6 +540,8 @@
                 ;      ;(+= timeMutexLocked (csym::elapsedTime tp (+ tp 1)))
                 ;      ;(csym::fprintf fpLock "%f, %d~%" (csym::elapsedTime tp (+ tp 1)) locked)
                 ;      ))))
+                (if (>= (aref vDegree vv) th_v)   ; Mod
+                 (begin
                 (= ITptr (fref (fref (aref vItemTable vv) head) -> next))
                 (%if* DEBUG-ENTY (begin
                   (= tempTableReference (fref pTsk -> numTableReference))
@@ -623,13 +558,14 @@
                         (csym::removeITnode (ptr (aref vItemTable vv)) (fref ITptr -> prev))))
                     (begin
                       (= ITptr (fref ITptr -> next)))))
-                (csym::insertITnodeAfter (ptr (aref vItemTable vv)) (fref (aref vItemTable vv) head) pTsk  (fref pTsk -> minID) (fref pTsk -> maxID) commonItem)
+                (csym::insertITnodeAfter (ptr (aref vItemTable vv)) (fref (aref vItemTable vv) head) (fref pTsk -> minID) (fref pTsk -> maxID) commonItem)
                 (%if* DEBUG-ENTY (begin
                   (csym::gettimeofday (+ tp 1) 0)
                   (+= timeTableReference (csym::elapsedTime tp (+ tp 1)))
                   ;(csym::fprintf fpEnty "%f, %llu~%" (csym::elapsedTime tp (+ tp 1)) (- (fref pTsk -> numTableReference) tempTableReference))
                   ))
                 (csym::pthread_mutex_unlock (ptr (aref mutex vv)))
+                ))
 
                 (inc (fref pTsk -> numSearch))
 
@@ -708,15 +644,10 @@
   (decl locked int)                      ; 
   (decl tp (array (struct timeval) 2))   ;
   (decl tpc (array (struct timeval) 4))  ;
-  (decl tempTableReference uint64_t) 
-  (decl C_bit (array set C-BIT-SIZE))    ; 
-  
-  ;mod convert c to cbit, and enumCCIG
-  (csym::CtoC_bit (fref pTsk -> C) C_bit (fref pTsk -> numC))
-
+  (decl tempTableReference uint64_t)     ; 
 
   ;; DFS
-  (do-many for i from minC to maxC       
+  (do-many for i from minC to maxC
     (= vv (aref (fref pTsk -> C) (- (- (fref pTsk -> numC) i) 1)))
     (inc (aref (fref pTsk -> vTraversed) vv))
 
@@ -738,6 +669,8 @@
         (if (>= commonNum th)
           (begin
             (= pruning 0)
+            (if (>= (aref vDegree vv) th_v) ;; Mod, check the # of edges from this vertex
+              (begin
 
             ;; check that common-itemset is subset of item table
             (%if* DEBUG-LOCK (begin
@@ -768,9 +701,7 @@
               (csym::gettimeofday tp 0)))
             (while (!= ITptr (fref (aref vItemTable vv) head))
               (inc (fref pTsk -> numTableReference))
-              ;;; Mod: modify the else block here. if (> (fref ITptr -> minID) (fref pTsk -> minID), add the code to check the common itemset is subset of item table or not. if it is, we can check the relationship of candidates set.
-              (if  (or (<= (fref ITptr -> minID) (fref pTsk -> minID))
-                    (csym::issubset C_bit ITptr->C_bit))
+              (if (<= (fref ITptr -> minID) (fref pTsk -> minID))
                 (begin
                   (for ((= k 0) (= m 0) (< k BIT-ITEM) (inc k))
                     (if (== (cast set (bit-and (aref commonItem k) (aref (fref ITptr -> item) k))) (aref commonItem k))
@@ -786,6 +717,7 @@
               ;(csym::fprintf fpEnty "%f, %llu~%" (csym::elapsedTime tp (+ tp 1)) (- (fref pTsk -> numTableReference) tempTableReference))
               ))
             ;(csym::pthread_mutex_unlock (ptr (aref mutex vv)))
+            ))
 
             ;; if common-itemset is not subset of item table, then
             (if (not pruning)
@@ -815,11 +747,13 @@
                 ;      ;(+= timeMutexLocked (csym::elapsedTime tp (+ tp 1)))
                 ;      ;(csym::fprintf fpLock "%f, %d~%" (csym::elapsedTime tp (+ tp 1)) locked)
                 ;      ))))
+                (if (>= (aref vDegree vv) th_v) ;; Mod, check the # of edges from this vertex
+                (begin 
                 (= ITptr (fref (fref (aref vItemTable vv) head) -> next))
                 (%if* DEBUG-ENTY (begin
                   (= tempTableReference (fref pTsk -> numTableReference))
                   (csym::gettimeofday tp 0)))
-                (while (!= ITptr (fref (aref vItemTable vv) head)) ;;until vItemTable is empty
+                (while (!= ITptr (fref (aref vItemTable vv) head))
                   (inc (fref pTsk -> numTableReference))
                   (if (>= (fref ITptr -> minID) (fref pTsk -> minID))
                     (begin
@@ -831,16 +765,14 @@
                         (csym::removeITnode (ptr (aref vItemTable vv)) (fref ITptr -> prev))))
                     (begin
                       (= ITptr (fref ITptr -> next)))))
-                      ;;Mod: code changed here
-                ;mod
-                ;(csym::memcpy pTsk->insert_C_bit C_bit (* (sizeof set) C-BIT-SIZE))      
-                (csym::insertITnodeAfter (ptr (aref vItemTable vv)) (fref (aref vItemTable vv) head) pTsk (fref pTsk -> minID) (fref pTsk -> maxID) commonItem)
+                (csym::insertITnodeAfter (ptr (aref vItemTable vv)) (fref (aref vItemTable vv) head) (fref pTsk -> minID) (fref pTsk -> maxID) commonItem)
                 (%if* DEBUG-ENTY (begin
                   (csym::gettimeofday (+ tp 1) 0)
                   (+= timeTableReference (csym::elapsedTime tp (+ tp 1)))
                   ;(csym::fprintf fpEnty "%f, %llu~%" (csym::elapsedTime tp (+ tp 1)) (- (fref pTsk -> numTableReference) tempTableReference))
                   ))
                 (csym::pthread_mutex_unlock (ptr (aref mutex vv)))
+                ))
 
                 (inc (fref pTsk -> numSearch))
 
@@ -854,7 +786,6 @@
                     (begin
                       (= (aref (fref pTsk -> C) (+ cc (fref pTsk -> numC))) (aref eTo j))
                       (inc cc))))
-   
 
                 ;; update vertices of CCIG
                 (if (== (+ (fref pTsk -> numT) 1) (fref pTsk -> sizeOfT))
@@ -1017,7 +948,6 @@
   (decl ITptr (ptr ITnode))            ; 
   (decl locked int)                    ; 
   (decl tp (array (struct timeval) 2)) ; 
-  ;(decl tempC_bit (array set C-BIT-SIZE))
 
   (for ((= i minVertex) (< i maxVertex) (inc i))
     (%if* DEBUG-TIME (begin
@@ -1029,7 +959,8 @@
 
         (= (aref (fref pTsk -> vTraversed) i) 2)
         (= visiting 0)
-
+        (if (>= (aref vDegree i) th_v)   ; Mod
+         (begin
         ;; check that itemset of 'i' is subset of itemset-table
         (%if* DEBUG-LOCK (begin
           (= locked 0)
@@ -1070,9 +1001,11 @@
           (csym::gettimeofday (+ tp 1) 0)
           (+= timeTableReference (csym::elapsedTime tp (+ tp 1)))
           ;(csym::fprintf fpEnty "%f, 1~%" (csym::elapsedTime tp (+ tp 1)))
-          ))
+          )))
         ;(csym::pthread_mutex_unlock (ptr (aref mutex i)))
-
+          (begin
+          (= visiting 1)
+          )) 
         ;; if search the CCIG whose starting point is 'i', then
         (if visiting
           (begin
@@ -1101,20 +1034,20 @@
             ;      ;(+= timeMutexLocked (csym::elapsedTime tp (+ tp 1)))
             ;      ;(csym::fprintf fpLock "%f, %d~%" (csym::elapsedTime tp (+ tp 1)) locked)
             ;      ))))
+            (if (>= (aref vDegree i) th_v)   ; Mod
+             (begin
             (csym::clearITlist (ptr (aref vItemTable i)))
-            (csym::insertITnodeAfter (ptr (aref vItemTable i)) (fref (aref vItemTable i) head) pTsk (fref pTsk -> minID) (fref pTsk -> maxID) (aref vItem i))
+            (csym::insertITnodeAfter (ptr (aref vItemTable i)) (fref (aref vItemTable i) head) (fref pTsk -> minID) (fref pTsk -> maxID) (aref vItem i))
             (csym::pthread_mutex_unlock (ptr (aref mutex i)))
-
+            ))
             (inc (fref pTsk -> numSearch))
 
             (for ((= j (aref vFirstEdge i)) (!= j -1) (= j (aref eNext j)))
               (if (< i (aref eTo j))
                 (begin
                   (= (aref (fref pTsk -> C) (fref pTsk -> numC)) (aref eTo j))
-                  (inc (fref pTsk -> numC))
-                  )))
+                  (inc (fref pTsk -> numC)))))
 
-           
             (= (aref (fref pTsk -> T) (fref pTsk -> numT)) i)
             (inc (fref pTsk -> numT))
             (inc (fref pTsk -> treeDepth))
@@ -1148,11 +1081,7 @@
   (decl ITptr (ptr ITnode))             ; 
   (decl locked int)                     ; 
   (decl tp (array (struct timeval) 2))  ; 
-  (decl tpc (array (struct timeval) 4)) 
-  (decl C_bit (array set C_BIT_SIZE)); only use adds the parameter into ITptr in insertITnode function
-
-  ;Mod: convert C to C_bit
-  (csym::CtoC_bit (fref pTsk -> C) C_bit (fref pTsk -> numC))
+  (decl tpc (array (struct timeval) 4)) ; 
 
   (do-many for i from minVertex to maxVertex
     (%if* DEBUG-TIME (begin
@@ -1165,6 +1094,8 @@
         (= (aref (fref pTsk -> vTraversed) i) 2)
         (= visiting 0)
 
+        (if (>= (aref vDegree i) th_v) ; mod
+         (begin
         ;; check that itemset of 'i' is subset of itemset-table
         (%if* DEBUG-LOCK (begin
           (= locked 0)
@@ -1184,7 +1115,7 @@
           (+= timeMutexLocked (csym::elapsedTime tp (+ tp 1)))
           (if locked
             (begin
-              ;(csym::gettimeofday (+ tp 1) 0)11                           
+              ;(csym::gettimeofday (+ tp 1) 0)
               ;(+= timeMutexLocked (csym::elapsedTime tp (+ tp 1)))
               ;(csym::fprintf fpLock "%f, %d~%" (csym::elapsedTime tp (+ tp 1)) locked)
               ))))
@@ -1192,9 +1123,7 @@
         (%if* DEBUG-ENTY (begin
           (csym::gettimeofday tp 0)))
         (inc (fref pTsk -> numTableReference))
-        ;;mod
-        (if (or (<= (fref ITptr -> minID) (fref pTsk -> minID))
-                    (csym::issubset C_bit ITptr->C_bit))
+        (if (<= (fref ITptr -> minID) (fref pTsk -> minID))
           (begin
             (for ((= k 0) (< k BIT-ITEM) (inc k))
               (if (!= (cast set (bit-and (aref vItem i k) (aref (fref ITptr -> item) k))) (aref vItem i k))
@@ -1207,8 +1136,11 @@
           (csym::gettimeofday (+ tp 1) 0)
           (+= timeTableReference (csym::elapsedTime tp (+ tp 1)))
           ;(csym::fprintf fpEnty "%f, 1~%" (csym::elapsedTime tp (+ tp 1)))
-          ))
+          )))
         ;(csym::pthread_mutex_unlock (ptr (aref mutex i)))
+        (begin
+          (= visiting 1)
+          ))
 
         ;; if search the CCIG whose starting point is 'i', then
         (if visiting
@@ -1238,20 +1170,20 @@
             ;      ;(+= timeMutexLocked (csym::elapsedTime tp (+ tp 1)))
             ;      ;(csym::fprintf fpLock "%f, %d~%" (csym::elapsedTime tp (+ tp 1)) locked)
             ;      ))))
+           (if (>= (aref vDegree i) th_v) ;mod
+            (begin
             (csym::clearITlist (ptr (aref vItemTable i)))
-            ;mod
-            ;(csym::memcpy pTsk->insert_C_bit C_bit (* (sizeof set) C-BIT-SIZE))  
-            (csym::insertITnodeAfter (ptr (aref vItemTable i)) (fref (aref vItemTable i) head) pTsk (fref pTsk -> minID) (fref pTsk -> maxID) (aref vItem i))
+            (csym::insertITnodeAfter (ptr (aref vItemTable i)) (fref (aref vItemTable i) head) (fref pTsk -> minID) (fref pTsk -> maxID) (aref vItem i))
             (csym::pthread_mutex_unlock (ptr (aref mutex i)))
+           ))
 
             (inc (fref pTsk -> numSearch))
 
             (for ((= j (aref vFirstEdge i)) (!= j -1) (= j (aref eNext j)))
               (if (< i (aref eTo j))
                 (begin
-                  (= (aref (fref pTsk -> C) (fref pTsk -> numC)) (aref eTo j)) 
+                  (= (aref (fref pTsk -> C) (fref pTsk -> numC)) (aref eTo j))
                   (inc (fref pTsk -> numC)))))
-
 
             (= (aref (fref pTsk -> T) (fref pTsk -> numT)) i)
             (inc (fref pTsk -> numT))

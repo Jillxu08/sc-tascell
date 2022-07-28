@@ -182,7 +182,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;; Mod: Function: issubset - check the value of C1_bit C2_bit,and result
-(def (csym::issubset C1_bit C2_bit) (fn int (ptr set) (ptr set))
+(def (csym::issubset C1_bit C2_bit) (fn int (ptr set) (ptr set)
   (def k int)
   (def m int 0)
   ;(def C1_bit (ptr set)) 
@@ -205,8 +205,8 @@
     (return tmp))
 
 ;;; Mod: Function: CtoC_bit
-(def (csym::CtoC_bit C C_bit numC) (fn void (ptr vtx) (array set) int)
-    (= C_bit (csym::init_bitarray 15500))
+(def (csym::CtoC_bit C C_bit numC) (fn void (ptr vtx) (ptr set) int)
+    (= C_bit (csym::init_bitarray 243))
     (def i int)
     (for ((= i 0) (< i numC) (inc i)) 
         (def num int (aref C i)) 
@@ -323,8 +323,8 @@
   (def C (ptr vtx))
   (def numC int)
   (def sizeOfC int)
-  ;Mod: add insert_C_bit into PTsk
-  (def insert_C_bit (array set C-BIT-SIZE)) 
+  ; Mod: add C_bit into PTsk
+  (def C_bit (array set C-BIT-SIZE)) 
   ;(def numC_bit int)
   ;(def sizeOfC_bit int) 
   (def T (ptr vtx))
@@ -347,7 +347,6 @@
   (decl i int)
   (def new (ptr ITnode) (csym::allocITnode))
   (def nxt (ptr ITnode) (fref p -> next))
-  (def C_bit (array set C-BIT-SIZE))
   (= (fref (fref p -> next) -> prev) new)
   (= (fref p -> next) new)
   (= (fref new -> minID) minID)
@@ -360,8 +359,7 @@
   ;(csym::memcpy new->C pTsk->C (* (sizeof vtx) pTsk->numC))  ;;copy from pTsk->C to ITnode->C
   ;;; Mod: copy C_bit from pTsk.
   ;(= (fref new -> C_bit) (cast (ptr set) (csym::malloc (* (sizeof set) (+ (/ size 64) 1)))))
-  (csym::CtoC_bit (fref pTsk -> C) C_bit (fref pTsk -> numC))
-  (csym::memcpy new->C_bit pTsk->insert_C_bit (* (sizeof set) C-BIT-SIZE)) 
+  (csym::memcpy new->C_bit pTsk->C_bit (* (sizeof set) C-BIT-SIZE)) 
   
   (= (fref new -> prev) p)
   (= (fref new -> next) nxt)
@@ -373,7 +371,7 @@
   (= (fref (fref p -> next) -> prev) (fref p -> prev))
   (= (fref list -> crnt) (fref p -> prev))
   ;;; Mod: new code added here
-  ;(csym::free p->C) ??
+  ;(csym::free p->C)
   ;(csym::free p->C_bit)
   (csym::free p))
 
@@ -506,8 +504,7 @@
   (decl ITptr (ptr ITnode))              ; pointer to the ITnode
   (decl locked int)                      ; 
   (decl tp (array (struct timeval) 2))   ;
-  (decl tempTableReference uint64_t)
-  ;(decl tempC_bit (array set C-BIT-SIZE))  ; 
+  (decl tempTableReference uint64_t)     ; 
 
   ;; DFS
   (for ((= i minC) (< i maxC) (inc i))
@@ -623,7 +620,7 @@
                         (csym::removeITnode (ptr (aref vItemTable vv)) (fref ITptr -> prev))))
                     (begin
                       (= ITptr (fref ITptr -> next)))))
-                (csym::insertITnodeAfter (ptr (aref vItemTable vv)) (fref (aref vItemTable vv) head) pTsk  (fref pTsk -> minID) (fref pTsk -> maxID) commonItem)
+                (csym::insertITnodeAfter (ptr (aref vItemTable vv)) (fref (aref vItemTable vv) head) pTsk (fref pTsk -> minID) (fref pTsk -> maxID) commonItem)
                 (%if* DEBUG-ENTY (begin
                   (csym::gettimeofday (+ tp 1) 0)
                   (+= timeTableReference (csym::elapsedTime tp (+ tp 1)))
@@ -708,15 +705,11 @@
   (decl locked int)                      ; 
   (decl tp (array (struct timeval) 2))   ;
   (decl tpc (array (struct timeval) 4))  ;
-  (decl tempTableReference uint64_t) 
-  (decl C_bit (array set C-BIT-SIZE))    ; 
+  (decl tempTableReference uint64_t)     ; 
   
-  ;mod convert c to cbit, and enumCCIG
-  (csym::CtoC_bit (fref pTsk -> C) C_bit (fref pTsk -> numC))
-
-
+  ;convert c to cbit, and enumCCIG
   ;; DFS
-  (do-many for i from minC to maxC       
+  (do-many for i from minC to maxC
     (= vv (aref (fref pTsk -> C) (- (- (fref pTsk -> numC) i) 1)))
     (inc (aref (fref pTsk -> vTraversed) vv))
 
@@ -770,7 +763,7 @@
               (inc (fref pTsk -> numTableReference))
               ;;; Mod: modify the else block here. if (> (fref ITptr -> minID) (fref pTsk -> minID), add the code to check the common itemset is subset of item table or not. if it is, we can check the relationship of candidates set.
               (if  (or (<= (fref ITptr -> minID) (fref pTsk -> minID))
-                    (csym::issubset C_bit ITptr->C_bit))
+                    (csym::issubset pTsk->C_bit ITptr->C_bit))
                 (begin
                   (for ((= k 0) (= m 0) (< k BIT-ITEM) (inc k))
                     (if (== (cast set (bit-and (aref commonItem k) (aref (fref ITptr -> item) k))) (aref commonItem k))
@@ -832,8 +825,6 @@
                     (begin
                       (= ITptr (fref ITptr -> next)))))
                       ;;Mod: code changed here
-                ;mod
-                ;(csym::memcpy pTsk->insert_C_bit C_bit (* (sizeof set) C-BIT-SIZE))      
                 (csym::insertITnodeAfter (ptr (aref vItemTable vv)) (fref (aref vItemTable vv) head) pTsk (fref pTsk -> minID) (fref pTsk -> maxID) commonItem)
                 (%if* DEBUG-ENTY (begin
                   (csym::gettimeofday (+ tp 1) 0)
@@ -854,7 +845,8 @@
                     (begin
                       (= (aref (fref pTsk -> C) (+ cc (fref pTsk -> numC))) (aref eTo j))
                       (inc cc))))
-   
+                 ;Mod     
+                (csym::CtoC_bit (fref pTsk -> C) (fref pTsk -> C_bit) (fref pTsk -> numC))      
 
                 ;; update vertices of CCIG
                 (if (== (+ (fref pTsk -> numT) 1) (fref pTsk -> sizeOfT))
@@ -1017,7 +1009,6 @@
   (decl ITptr (ptr ITnode))            ; 
   (decl locked int)                    ; 
   (decl tp (array (struct timeval) 2)) ; 
-  ;(decl tempC_bit (array set C-BIT-SIZE))
 
   (for ((= i minVertex) (< i maxVertex) (inc i))
     (%if* DEBUG-TIME (begin
@@ -1148,12 +1139,9 @@
   (decl ITptr (ptr ITnode))             ; 
   (decl locked int)                     ; 
   (decl tp (array (struct timeval) 2))  ; 
-  (decl tpc (array (struct timeval) 4)) 
-  (decl C_bit (array set C_BIT_SIZE)); only use adds the parameter into ITptr in insertITnode function
+  (decl tpc (array (struct timeval) 4)) ; 
 
-  ;Mod: convert C to C_bit
-  (csym::CtoC_bit (fref pTsk -> C) C_bit (fref pTsk -> numC))
-
+  ; need to modify
   (do-many for i from minVertex to maxVertex
     (%if* DEBUG-TIME (begin
       (csym::gettimeofday (aref t i) 0)))
@@ -1184,7 +1172,7 @@
           (+= timeMutexLocked (csym::elapsedTime tp (+ tp 1)))
           (if locked
             (begin
-              ;(csym::gettimeofday (+ tp 1) 0)11                           
+              ;(csym::gettimeofday (+ tp 1) 0)
               ;(+= timeMutexLocked (csym::elapsedTime tp (+ tp 1)))
               ;(csym::fprintf fpLock "%f, %d~%" (csym::elapsedTime tp (+ tp 1)) locked)
               ))))
@@ -1192,9 +1180,7 @@
         (%if* DEBUG-ENTY (begin
           (csym::gettimeofday tp 0)))
         (inc (fref pTsk -> numTableReference))
-        ;;mod
-        (if (or (<= (fref ITptr -> minID) (fref pTsk -> minID))
-                    (csym::issubset C_bit ITptr->C_bit))
+        (if (<= (fref ITptr -> minID) (fref pTsk -> minID))
           (begin
             (for ((= k 0) (< k BIT-ITEM) (inc k))
               (if (!= (cast set (bit-and (aref vItem i k) (aref (fref ITptr -> item) k))) (aref vItem i k))
@@ -1239,8 +1225,6 @@
             ;      ;(csym::fprintf fpLock "%f, %d~%" (csym::elapsedTime tp (+ tp 1)) locked)
             ;      ))))
             (csym::clearITlist (ptr (aref vItemTable i)))
-            ;mod
-            ;(csym::memcpy pTsk->insert_C_bit C_bit (* (sizeof set) C-BIT-SIZE))  
             (csym::insertITnodeAfter (ptr (aref vItemTable i)) (fref (aref vItemTable i) head) pTsk (fref pTsk -> minID) (fref pTsk -> maxID) (aref vItem i))
             (csym::pthread_mutex_unlock (ptr (aref mutex i)))
 
@@ -1252,7 +1236,8 @@
                   (= (aref (fref pTsk -> C) (fref pTsk -> numC)) (aref eTo j)) 
                   (inc (fref pTsk -> numC)))))
 
-
+            ;Mod: convert C to C_bit
+            ;(csym::CtoC_bit (fref pTsk -> C) (fref pTsk -> C_bit) (fref pTsk -> numC))
             (= (aref (fref pTsk -> T) (fref pTsk -> numT)) i)
             (inc (fref pTsk -> numT))
             (inc (fref pTsk -> treeDepth))

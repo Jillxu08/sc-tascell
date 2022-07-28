@@ -506,8 +506,8 @@
               (+= timeTableReference (csym::elapsedTime tp (+ tp 1)))
               ;(csym::fprintf fpEnty "%f, %llu~%" (csym::elapsedTime tp (+ tp 1)) (- (fref pTsk -> numTableReference) tempTableReference))
               ))
-            ;(csym::pthread_mutex_unlock (ptr (aref mutex vv)))
-
+            ;(csym::pthread_mutex_unlock (ptr (aref mutex vv))
+        
             ;; if common-itemset is not subset of item table, then
             (if (not pruning)
               (begin
@@ -535,7 +535,7 @@
                 ;      ;(csym::gettimeofday (+ tp 1) 0)
                 ;      ;(+= timeMutexLocked (csym::elapsedTime tp (+ tp 1)))
                 ;      ;(csym::fprintf fpLock "%f, %d~%" (csym::elapsedTime tp (+ tp 1)) locked)
-                ;      ))))
+                ;      ))))                            
                 (= ITptr (fref (fref (aref vItemTable vv) head) -> next))
                 (%if* DEBUG-ENTY (begin
                   (= tempTableReference (fref pTsk -> numTableReference))
@@ -946,7 +946,6 @@
 
         (= (aref (fref pTsk -> vTraversed) i) 2)
         (= visiting 0)
-
         ;; check that itemset of 'i' is subset of itemset-table
         (%if* DEBUG-LOCK (begin
           (= locked 0)
@@ -1021,7 +1020,6 @@
             (csym::clearITlist (ptr (aref vItemTable i)))
             (csym::insertITnodeAfter (ptr (aref vItemTable i)) (fref (aref vItemTable i) head) (fref pTsk -> minID) (fref pTsk -> maxID) (aref vItem i))
             (csym::pthread_mutex_unlock (ptr (aref mutex i)))
-
             (inc (fref pTsk -> numSearch))
 
             (for ((= j (aref vFirstEdge i)) (!= j -1) (= j (aref eNext j)))

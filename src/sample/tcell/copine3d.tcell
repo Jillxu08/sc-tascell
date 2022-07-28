@@ -87,6 +87,10 @@
 (%defconstant DEBUG-LOCK 0) ; flag to output lock file
 (%defconstant DEBUG-COPY 0) ; flag to output copy file
 
+;;;Mod- For function CtoC_bit
+(%defconstant SHIFT 6)
+(%defconstant MASK 63)
+
 ;;; Typedef
 (deftype set uint64_t)        ; bitset
 (deftype vtx uint32_t)        ; vertex
@@ -162,6 +166,40 @@
 (decl mutex (array pthread_mutex_t V-SIZE))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;; Mod Function: issubset - jundge the relationship between candidates in ITptr and Ptsk
+(def (csym::issubset C1 C2 numC1 numC2) (fn int (ptr vtx) (ptr vtx) int int)
+  (def k int)
+  (def m int 0)
+  (def C1_bit (ptr set)) 
+  (def C2_bit (ptr set)) 
+
+  (csym::CtoC_bit C1 C1_bit numC1)
+  (csym::CtoC_bit C2 C2_bit numC2)
+
+  (for ((= k 0) (< k 243) (inc k))
+    (if (== (cast set (bit-and (aref C1_bit k) (aref C2_bit k))) (aref C1_bit k))
+      (inc m)))
+  (if (== m 243)
+    (return 1)
+    (return 0)))
+
+;;; Mod Function: init_bitarray
+(def (csym::init_bitarray size) (fn (ptr set) int)
+    (def tmp (ptr set) (cast (ptr set) (csym::malloc (* (sizeof set) (+ (/ size 64) 1)) )))
+    (csym::memset tmp 0 (+ (/ size 64) 1))
+    (return tmp))
+
+;;; Mod Function: CtoC_bit
+(def (csym::CtoC_bit C C_bit numC) (fn void (ptr vtx) (ptr set) int)
+    (= C_bit (csym::init_bitarray 243))
+    (def i int)
+    (for ((= i 0) (< i numC) (inc i)) 
+        (def num int (aref C i)) 
+        (|= (aref C_bit (>> num SHIFT)) (<< 1 (bit-and num MASK)))
+    )
+)
+
 
 ;;; Function: getrusageSec - have the user time
 (def (csym::getrusageSec) (fn double void)

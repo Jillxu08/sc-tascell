@@ -457,10 +457,13 @@
                     (+= (fref pTsk -> numC) cc)
                     (inc (fref pTsk -> numT))
 
-                    (if (== EXITING EXITING-SPAWN)
-                      (begin
-                        (for ((= j 0) (<= j i) (inc j))
-                          (inc (aref (fref pTsk -> vTraversed) (aref (fref pTsk -> C) (- (- numC j) 1))))))))
+                    ;# mod remove
+                    ;;;(if (== EXITING EXITING-SPAWN)
+                     ;;; (begin
+                       ; (for ((= j 0) (<= j i) (inc j))
+                          ;(inc (aref (fref pTsk -> vTraversed) (aref (fref pTsk -> C) (- (- numC j) 1)))))))
+                          
+                          )
                   (:body
                     (%if* DEBUG-SHOW (begin
                       (begin
@@ -474,10 +477,12 @@
                     (for ((= j 0) (< j (fref pTsk -> numC)) (inc j))
                       (dec (aref (fref pTsk -> vTraversed) (aref (fref pTsk -> C) j)))))
                   (:after
-                    (if (== EXITING EXITING-SPAWN)
-                      (begin
-                        (for ((= j 0) (<= j i) (inc j))
-                          (dec (aref (fref pTsk -> vTraversed) (aref (fref pTsk -> C) (- (- numC j) 1)))))))
+
+                   ;# mod remove
+                   ; (if (== EXITING EXITING-SPAWN)
+                    ;  (begin
+                     ;   (for ((= j 0) (<= j i) (inc j))
+                      ;    (dec (aref (fref pTsk -> vTraversed) (aref (fref pTsk -> C) (- (- numC j) 1)))))))
 
                     (-= (fref pTsk -> numC) cc)
                     (dec (fref pTsk -> numT)))))
