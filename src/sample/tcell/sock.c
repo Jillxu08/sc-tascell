@@ -40,6 +40,8 @@ SUCH DAMAGE.
 #define SEND_MAX 65536
 #define RECV_MAX 1024
 
+#define h_addr h_addr_list[0] /* for backward compatibility */
+
 /* SunOS does not support vasprintf() */
 #ifdef NO_VASPRINTF
 #define VSNPRINTF_LEN 1000

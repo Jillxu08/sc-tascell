@@ -1,6 +1,6 @@
 #!/bin/sh
 # set SC_PREFIX to your SC directory
-export SC_PREFIX=/path/to/sc-directory
+export SC_PREFIX=/home/usr9/r70209a/sc-tascell
 
 export SC_PATH=$SC_PREFIX/bin
 export SC_CMDLINE=$SC_PREFIX/src/sc-cmdline.lsp

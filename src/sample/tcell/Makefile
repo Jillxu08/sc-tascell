@@ -13,8 +13,12 @@ XCC=xcc
 GCC=gcc #$(XCC)
 # Command for Intel C Compiler
 ICC=icc
+# Command for OpenMP offload to GPU
+MOPT=-fopenmp # -foffload=nvptx-none
 # Optimization options for C Compilers
-OPT=-O3 -march=native -g $(MOPT)
+OPT=-O3 -std=c99 -march=native $(MOPT) th.c
+OPT+=-mcmodel=medium
+# OPT=-O3 -g $(MOPT) -gpu=cc60,cuda11.0,pinned th.c
 
 # Keyword for L-Closures and Closures in XC Cube. Don't modify.
 XCCOPT=-DCT=lightweight
@@ -48,7 +52,7 @@ endif
 # icc-c, icc-lw, and icc-clos}
 # By default, this Makefile makes all ALL_PROGS. You can make just one of targets by specifying the target file name,
 # (e.g., "make fib-gcc")
-APPS=fib fib-guard fib-try fib-thr lu cmp pen pen-excep pen6x17 pen6x17-guard pen6x17-try pen6x17-thr nq nq-try nq-thr grav matmul spanning bcast minmax mm0 mm3 mm3_parallel mm3_parallel_compare mm4 mm4_parallel mm4_parallel1 mm4_parallel1_th mm5
+APPS=fib fib-guard fib-try fib-thr lu cmp pen pen-excep pen6x17 pen6x17-guard pen6x17-try pen6x17-thr nq nq-try nq-thr grav matmul spanning bcast minmax mm0 mm3 mm3_parallel mm3_parallel_compare mm4 mm4_parallel mm4_parallel1 mm4_parallel1_th mm5 mm_block2 mm_block2_para
 # copine0 copine1 copine2 copine3 copine4 copine0d copine1d copine3d copine3v_1 copine3v copine3v_2 copine3v_2_1 copine3v_2_1_oh copine3v_2_2 copine3v_2_1_oh_th copine3-sparse
 C_PROGS=$(addsuffix -c,$(APPS))
 GCC_PROGS=$(addsuffix -gcc,$(APPS))

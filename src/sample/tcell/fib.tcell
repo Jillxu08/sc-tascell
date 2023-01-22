@@ -52,7 +52,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (%if* COUNT-NTASK
-  (def worker-data
+  (def worker-data         
       (def n-task long))
   (def worker-init
       (= WDATA.n-task 0))
@@ -126,7 +126,7 @@
       (def s2 long)
       (do-two
           (= s1 (fib (- n 1)))
-	  (= s2 (fib (- n 2)))
+	        (= s2 (fib (- n 2)))
         (handles fib
          (:put
           (%if* USE-PROBGUARD

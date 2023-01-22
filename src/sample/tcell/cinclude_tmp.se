@@ -1,0 +1,43 @@
+$(sc::%line 1 "/home/usr9/r70209a/sc-tascell/src/sample/tcell/cinclude_tmp.h")
+$(sc::%line 1 "sock.h")
+$(sc::%line 27 "sock.h")
+int connect_to (char *hostname, unsigned short port);
+void close_socket (int socket);
+
+int send_char (char, int socket);
+int send_string (char *str, int socket);
+int send_fmt_string (int socket, char *fmt_string, ...);
+int send_binary (void *src, unsigned long elm_size, unsigned long n_elm,
+                 int socket);
+
+int receive_char (int socket);
+char* receive_line (char *buf, int maxlen, int socket);
+int receive_binary (void *dst, unsigned long elm_size, unsigned long n_elm,
+                    int socket);
+
+extern char *receive_buf;
+extern char *receive_buf_p;
+$(sc::%line 2 "/home/usr9/r70209a/sc-tascell/src/sample/tcell/cinclude_tmp.h")
+$(c2sc::%defconstant-cexp csym::__@STDC_VERSION__ "199409L")
+$(c2sc::%defconstant-cexp csym::__@LINE__ "-1234567890")
+$(c2sc::%defconstant-cexp csym::__@FILE__ "")
+$(c2sc::%defconstant-cexp csym::__@DATE__ "\"Dec 22 2022\"")
+$(c2sc::%defconstant-cexp csym::__@TIME__ "\"14:12:20\"")
+$(c2sc::%defconstant-cexp csym::__@STDC_HOSTED__ "1")
+$(c2sc::%defconstant-cexp csym::__@STDC__ "1")
+$(sc::%line 1 "/home/usr9/r70209a/sc-tascell/src/sample/tcell/cinclude_tmp.se6")
+$(c2sc::%defconstant-cexp csym::__complex__ "1")
+$(c2sc::%defconstant-cexp csym::__const "const")
+$(c2sc::%defconstant-cexp csym::__extension__ "")
+$(c2sc::%defconstant-cexp csym::__cdecl "")
+$(c2sc::%defmacro-cexp csym::__attribute__ "" (csym::x) )
+$(c2sc::%defconstant-cexp csym::__inline "")
+$(c2sc::%defconstant-cexp csym::__inline__ "")
+$(c2sc::%defmacro-cexp csym::__asm "" (csym::x) )
+$(c2sc::%defmacro-cexp csym::__asm__ "" (csym::x) )
+$(c2sc::%defmacro-cexp csym::__declspec "" (csym::x) )
+$(c2sc::%defconstant-cexp csym::unix "1")
+$(c2sc::%defconstant-cexp csym::__unix "1")
+$(c2sc::%defconstant-cexp csym::__unix__ "1")
+$(c2sc::%defconstant-cexp csym::__linux__ "1")
+$(c2sc::%defconstant-cexp csym::__@MCPP "2")

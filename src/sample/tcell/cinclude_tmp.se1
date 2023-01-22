@@ -1,0 +1,20 @@
+$(sc::%line 1 "/home/usr9/r70209a/sc-tascell/src/sample/tcell/cinclude_tmp.h")
+$(sc::%line 1 "sock.h")
+$(sc::%line 27 "sock.h")
+int connect_to (char *hostname, unsigned short port);
+void close_socket (int socket);
+
+int send_char (char, int socket);
+int send_string (char *str, int socket);
+int send_fmt_string (int socket, char *fmt_string, ...);
+int send_binary (void *src, unsigned long elm_size, unsigned long n_elm,
+                 int socket);
+
+int receive_char (int socket);
+char* receive_line (char *buf, int maxlen, int socket);
+int receive_binary (void *dst, unsigned long elm_size, unsigned long n_elm,
+                    int socket);
+
+extern char *receive_buf;
+extern char *receive_buf_p;
+$(sc::%line 2 "/home/usr9/r70209a/sc-tascell/src/sample/tcell/cinclude_tmp.h")
