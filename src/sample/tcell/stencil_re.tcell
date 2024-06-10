@@ -1,0 +1,176 @@
+(%ifndef* NF-TYPE
+  (%defconstant NF-TYPE GCC)) ; one of (GCC LW-SC CL-SC XCC XCCCL)
+(%include "rule/tcell-setrule.sh")
+
+(c-exp "#include<stdio.h>")
+(c-exp "#include<stdlib.h>")
+(c-exp "#include<time.h>")
+;; (c-exp "#include<math.h>")
+(c-exp "#include<sys/time.h>")
+
+(%include "clib.sh")
+
+(%defconstant NX 256)
+(%defconstant NY 256)
+(%defconstant It 4000)
+
+(def th_cpu int 50)
+(def delT double (/ 0.1 (* NX NX)))
+(static a (ptr (array double (+ NY 1))))
+(static b (ptr (array double (+ NY 1))))
+
+(decl (csym::elapsed-time tp) (fn double (array (struct timeval) 2)))
+(decl (csym::stencil_recursive sa sb nx ny)(fn void (ptr (array double (+ NY 1))) (ptr (array double (+ NY 1))) int int))
+(decl (csym::ex_pointer x y) (fn void (ptr (array double (+ NY 1))) (ptr (array double (+ NY 1)))))
+
+(def (csym::elapsed-time tp) 
+    (fn double (array (struct timeval) 2))
+  (return (+ (- (fref (aref tp 1) tv-sec)
+                (fref (aref tp 0) tv-sec))
+             (* 0.000001
+                (- (fref (aref tp 1) tv-usec)
+                   (fref (aref tp 0) tv-usec))))))
+                   
+(def (task stencil-start))
+
+;; (def (task blockTask)
+;;     (defs int n)
+;;     (def param (ptr (array int 2)))
+;;     (def i1 int)
+;;     (def i2 int))
+
+;; (def (task-body blockTask)
+;;     (block_para this.param this.n this.i1 this.i2))
+
+(def (task-body stencil-start)
+  (decl tp (array (struct timeval) 2))
+  (csym::fprintf stderr "start stencil~%")
+
+  (csym::fprintf stderr "000:th_cpu=%d NX=%d NY=%d~%" th_cpu NX NY)
+  (= a (cast (ptr (array double (+ NY 1))) (csym::malloc (* (+ NX 1) (* (+ NY 1) (sizeof double))))))
+  (= b (cast (ptr (array double (+ NY 1))) (csym::malloc (* (+ NX 1) (* (+ NY 1) (sizeof double))))))
+  (def i int)
+  (def j int)
+  (def k int)
+
+  (csym::fprintf stderr "00:th_cpu=%d NX=%d NY=%d~%" th_cpu NX NY)
+  (csym::fprintf stderr "start initialization~%")
+  (for ((= j 0) (< j (+ NY 1)) (inc j))
+    (for ((= i 0) (< i (+ NX 1)) (inc i))
+      (= (aref a j i) 0)))
+  ;; 行 0.5
+  (for ((= j 1) (< j (+ NY 1)) (inc j))
+    (= (aref a j 0) 0.5))
+  ;; 列 1
+  (for ((= i 1) (< i (+ NY 1)) (inc i))
+    (= (aref a 0 i) 1))
+
+  (csym::fprintf stderr "start iteration~%")
+  (csym::fprintf stderr "0:th_cpu=%d NX=%d NY=%d~%" th_cpu NX NY)
+  (csym::gettimeofday tp 0)
+  (stencil_recursive a b NX NY)
+  (csym::gettimeofday (+ tp 1) 0)
+  (csym::fprintf stderr "time: %5.4f~%"  (csym::elapsed-time tp))
+
+  (def fp (ptr FILE))
+  (= fp (fopen "u2.data" "w"))
+  (for ((= j 0) (< j NY) (inc j))
+    (for ((= i 0) (< i NX) (inc i))
+      (csym::fprintf fp " %.15E %.15E %.15E~%" (/ (cast double i) NX) (/ (cast double j) NY) (aref a j i))
+    )
+    (csym::fprintf fp "~%")
+  )
+  (fclose fp)
+)
+
+(def (stencil_recursive sa sb nx ny)(fn void (ptr (array double (+ NY 1))) (ptr (array double (+ NY 1))) int int)
+   (defs int i j k)
+   (defs double d_a d_b)
+   (csym::fprintf stderr "no error1~%")
+      (if (<= nx th_cpu)
+        (begin 
+          (csym::fprintf stderr "1:th_cpu=%d nx=%d ny=%d~%" th_cpu nx ny)
+          (csym::fprintf stderr "no error2.0~%")
+          (for ((= k 0) (< k It) (inc k))
+            (for ((= j 1) (< j ny) (inc j))
+              (for ((= i 1) (< i nx) (inc i))
+                ;; (csym::fprintf stderr "no error2.1~%")
+                ( = (aref sb j i) 
+                  ;; = (aref sb j i) 
+                    (+ (aref sa j i) 
+                      (* (* delT (* NX NX)) 
+                        (-
+                          (+
+                            (+ (aref sa (+ j 1) i) (aref sa (- j 1) i))
+                            (+ (aref sa j (+ i 1)) (aref sa j (- i 1)))
+                          )
+                          (* 4 (aref sa j i))
+                        )
+                      )
+                    )
+                )
+                ;; (csym::fprintf stderr "no error2.2~%")
+              )
+            )
+            (csym::ex_pointer sa sb)
+          ) 
+          (csym::fprintf stderr "sa[0][0]=%f sb[0][0]=%f~%" (aref sa 0 0) (aref sb 0 0))
+        ;;   (= d_a (- (aref sa 1 0) (aref a 1 0)) )
+        ;;   (= d_b (- (aref sb 1 0) (aref b 1 0)) )
+        ;; ;;   (= d_b (- sb b))
+        ;;   (csym::fprintf stderr "sa=%f a=%f d_a=%f~%" (aref sa 1 0) (aref a 1 0) d_a)
+        ;;   (csym::fprintf stderr "sb=%f b=%f d_a=%f~%" (aref sb 1 0) (aref b 1 0) d_b)
+        ;;   (csym::free sa)
+        ;;   (csym::free sb)
+          (csym::fprintf stderr "no error2~%")
+        )
+        (begin 
+          (defs (ptr (array double (+ ny 1))) a0 a1 a2 a3 b0 b1 b2 b3)
+          (csym::fprintf stderr "no error3~%")
+
+
+
+          (= a0 sa)
+          (= b0 sb)
+
+          (= a2 (+ sa (/ nx 2)))
+          (= b2 (+ sb (/ nx 2)))
+
+          ;; (= a2 (+ sa (* (/ ny 2) nx)))
+          ;; (= a3 (+ sa (+ (* (/ ny 2) nx) (/ nx 2))))
+          ;; (= b2 (+ sb (* (/ ny 2) nx)))
+          ;; (= b3 (+ sb (+ (* (/ ny 2) nx) (/ nx 2))))
+
+          ;; (= a1 (cast (ptr (array double (+ (/ ny 2) 1))) (aref sa 0 (/ ny 2))))
+          (= a1 (cast (ptr (array double (+ (/ ny 2) 1))) (ptr (aref sa 0 (/ ny 2)))))
+          (= b1 (cast (ptr (array double (+ (/ ny 2) 1))) (ptr (aref sb 0 (/ ny 2)))))
+          (= a3 (+ a1 (/ nx 2)))
+          (= b3 (+ b1 (/ nx 2)))
+          ;; ;; (= a1 (aref sa 0 (cast int (/ ny 2))))
+          ;; (= b1 (aref sb 0 (cast int (/ ny 2))))
+          ;; (= a1 (+ a0 1))
+          ;; (= b1 (+ b0 1))
+          (csym::fprintf stderr "a1[0][0]=%f a0[0][0]=%f~%" (aref a1 0 0) (aref a0 0 0))
+
+
+
+
+          (csym::fprintf stderr "no error4~%")
+
+        (csym::stencil_recursive a0 b0 (/ nx 2) (/ ny 2))
+        (csym::fprintf stderr "no error50~%")
+        (csym::stencil_recursive a1 b1 (/ nx 2) (/ ny 2))
+        (csym::fprintf stderr "no error51~%")
+        (csym::stencil_recursive a2 b2 (/ nx 2) (/ ny 2))
+        (csym::fprintf stderr "no error52~%")
+        (csym::stencil_recursive a3 b3 (/ nx 2) (/ ny 2))
+        (csym::fprintf stderr "no error53~%")
+        ) 
+      )
+    )
+
+(def (csym::ex_pointer x y)(fn void (ptr (array double (+ NY 1))) (ptr (array double (+ NY 1))))
+    (def t (ptr (array double (+ NX 1))))
+        (= t (ptr (aref x 0)))
+        (= x (ptr (aref y 0)))
+        (= y t))

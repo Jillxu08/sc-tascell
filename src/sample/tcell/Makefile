@@ -3,18 +3,35 @@ OS=${shell uname}
 SC2C=sc2c
 # Options for SC-to-C compiler
 SC2C_OPT=
-SC2C_OPT+=-m              # don't remove intermediate files
+# SC2C_OPT+=-m              # don't remove intermediate files
 # SC2C_OPT+=-D DEBUG=0      # invalidate debugging code
-# SC2C_OPT+=-D NO-EXCEPTION # invalidate exception support
+SC2C_OPT+=-D NO-EXCEPTION # invalidate exception support
 SC2C_OPT+=-D PROFILE        # validate profiling
 # Command for XC Cube (an extended GCC that supports L-Closures and Closures)
 XCC=xcc
 # Command for gcc
-GCC=gcc #$(XCC)
+# GCC=gcc #$(XCC) 
+GCC=nvc #$(XCC)
 # Command for Intel C Compiler
 ICC=icc
+# Command for OpenMP offload to GPU
+# MOPT=-fopenmp -foffload=nvptx-none
+# MOPT=-fopenacc -foffload=nvptx-none
+MOPT=-acc
+# CFLAGS = -I/home/usr9/r70209a/opt/cuda_11.7/include
+# CFLAGS = -I/$HOME/opt/cuda_11.7/targets/x86_64-linux/include
+# LDFLAGS = -L/home/usr9/r70209a/opt/cuda_11.7/lib64
+
+# MOPT=-lnvblas -lm -lpthread
+# MOPT= -lopenblas -lm -lpthread
+
 # Optimization options for C Compilers
-OPT=-O3 -msse4.2 -g $(MOPT)
+# OPT=-O3 -std=c99 -march=native $(MOPT) $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD)
+# OPT=-O3 -lm -march=native -Mvect -Minline -Mconcur -std=c99 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
+OPT=-O3 -lm -march=native -std=c99 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
+# mm_c_th.c
+# OPT+=-mcmodel=medium
+# OPT=-O3 -g $(MOPT) -gpu=cc60,cuda11.0,pinned th.c
 
 # Keyword for L-Closures and Closures in XC Cube. Don't modify.
 XCCOPT=-DCT=lightweight
@@ -48,8 +65,8 @@ endif
 # icc-c, icc-lw, and icc-clos}
 # By default, this Makefile makes all ALL_PROGS. You can make just one of targets by specifying the target file name,
 # (e.g., "make fib-gcc")
-APPS=fib fib-guard fib-try fib-thr lu cmp pen pen-excep pen6x17 pen6x17-copy pen6x17-guard pen6x17-try pen6x17-thr nq nq-copy nq-try nq-thr grav matmul spanning bcast minmax copine0 copine1 copine2 copine3 copine4 copine0d copine1d copine3d
-
+APPS=fib fib-guard fib-try fib-thr lu cmp pen pen-excep pen6x17 pen6x17-guard pen6x17-try pen6x17-thr nq nq-try nq-thr grav matmul spanning bcast minmax mm0 mm3 mm3_parallel mm3_parallel_compare mm4 mm4_parallel mm4_parallel1 mm4_parallel1_th mm5 mm_block2 mm_block2_para mm_omp_c mm_omp_c_para stencil_para stencil_re stencil_para1 stencil_para_gpu stencil_para_multi
+# copine0 copine1 copine2 copine3 copine4 copine0d copine1d copine3d copine3v_1 copine3v copine3v_2 copine3v_2_1 copine3v_2_1_oh copine3v_2_2 copine3v_2_1_oh_th copine3-sparse
 C_PROGS=$(addsuffix -c,$(APPS))
 GCC_PROGS=$(addsuffix -gcc,$(APPS))
 GCCLW_PROGS=$(addsuffix -lw,$(APPS))
@@ -134,7 +151,6 @@ $(GCCCLOS_PROGS): %: $(WORKER_CLOS) $(LIBS) nestfunc.c %.c
 # ICC: CL-SC
 $(ICC_CLOS_PROGS): %: $(WORKER_CLOS) $(LIBS) nestfunc.c %.c
 	$(ICC) $(OPT) $+ $(LIBOPTS) -o $@
-
 # XCC nested function (lightweight)
 $(WORKER_XCC): %-xcc.c: %.sc worker.sh dprint.sh
 	$(SC2C) $(SC2C_OPT) -D NF-TYPE=XCC $<
