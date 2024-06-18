@@ -1,10 +1,10 @@
-#define N 8192
+#define N 65536L
 // // 131072L, 65536L, 32768, 16384, 8192, 4096, 2048
 // #define th_gpu1 4096 // th_gpu > BLOCK_LEVEL
 // #define th_gpu2 1024
 // #define th_cpu 128
 #define delT (1/5.0)
-#define MAX_TEMP 100.0 // Temperature threshold
+#define MAX_TEMP 25.0 // Temperature threshold
 // #define It 500
 // #define BLOCK_LEVEL 30
 
@@ -27,6 +27,16 @@ void scpu_tb(int x, int y, int n, int id, int it);
 // void scpu(int x, int y, int n, int id, int it);
 void cpu_tb(int x, int y, int n, int it);
 void cpu(int x, int y, int n, int id, int it);
+void seq_cpu(int j, int i, int it);
+
+// issues:
+// 1.只有gpu函数，用2个core时， 
+// ------------------- time -----------------
+// tascell:worker_id=0, it=0, n=16, x=1, y=1 
+// tascell:worker_id=0, it=0, n=16, x=1, y=17 
+// srun: error: ng0008: task 0: Segmentation fault (core dumped)
+
+
 
 // ------ size ----------
 // system G

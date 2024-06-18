@@ -36,13 +36,13 @@ void init_gpu(int n)
         #pragma acc parallel loop collapse(2)
         for(int j=1; j < (1+n); j++){
             for(int i=1; i < (1+n); i++){
-                // if(a[j][i] > MAX_TEMP){
-                //     b[j][i] = a[j][i] - 0.1 * (a[j][i] - delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]));
-                // }
-                // else
-                // {
-                //     b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
-                // }
+                if(a[j][i] > MAX_TEMP){
+                    b[j][i] = a[j][i] - 0.1 * (a[j][i] - delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]));
+                }
+                else
+                {
+                    b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
+                }
                 b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
                 // b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] 
                 // + a[j-1][i-1] + a[j-1][i+1] + a[j+1][i-1] + a[j+1][i+1] + a[j][i]);
@@ -53,16 +53,32 @@ void cpu(int x, int y, int n, int id, int it)
 {   
     for(int j=x; j < (x+n); j++){
         for(int i=y; i < (y+n); i++){
-            if(a[j][i] > MAX_TEMP){
-                b[j][i] = a[j][i] - 0.1 * (a[j][i] - delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]));
-            }
-            else
-            {
-                b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
-            }
+            if(a[j][i] > MAX_TEMP)
+                {
+                    // fprintf(stderr,"----------  ------------\n");
+                    b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i] + a[j-1][i-1] + a[j-1][i+1] + a[j+1][i-1] + a[j+1][i+1]);
+                }
+                else{
+                    b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);  
+                }
             // b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] 
             // + a[j-1][i-1] + a[j-1][i+1] + a[j+1][i-1] + a[j+1][i+1] + a[j][i]);
     }}
+}
+
+void seq_cpu(int j, int i, int it)
+{     
+    // d[j][i] = c[j][i] - 0.1 * (c[j][i] - delT*(c[j+1][i] + c[j-1][i] + c[j][i+1] + c[j][i-1] + c[j][i]));
+    if(c[j][i] > MAX_TEMP)
+        {
+    //         // fprintf(stderr,"---------- seq_cpu ------------\n");
+    //         // d[j][i] = delT1*(c[j+1][i] + c[j-1][i] + c[j][i+1] + c[j][i-1] + c[j][i]+ c[j-1][i-1] + c[j-1][i+1] + c[j+1][i-1] + c[j+1][i+1]);
+            d[j][i] = c[j][i] - 0.1 * (c[j][i] - delT*(c[j+1][i] + c[j-1][i] + c[j][i+1] + c[j][i-1] + c[j][i]));
+        }
+        else{
+            d[j][i] = delT*(c[j+1][i] + c[j-1][i] + c[j][i+1] + c[j][i-1] + c[j][i]);  
+        }
+        // fprintf(stderr,"seq_cpu: new_b[%d][%d]=%f(%p), c[%d][%d]=%f(%p), c[%d][%d]=%f, c[%d][%d]=%f, c[%d][%d]=%f, c[%d][%d]=%f\n", j, i, d[j][i], &d[j][i], j+1, i, c[j+1][i], &c[j+1][i], j-1, i, c[j-1][i], j, i+1, c[j][i+1], j, i-1, c[j][i-1], j, i, c[j][i]);
 }
 
 void gpu(int x, int y, int n, int id, int it)
@@ -94,8 +110,6 @@ void sgpu_tb(int x, int y, int n, int id, int it)
     int xx_s, yy_s, xx_e, yy_e;
     int nn = n+2*BLOCK_LEVEL;
     // int nn = th_gpu1+2*BLOCK_LEVEL;
-
-
     // fprintf(stderr,"---------- nn= %d ------------\n", nn);
     
     double (* new_b)[nn];
@@ -157,14 +171,19 @@ void sgpu_tb(int x, int y, int n, int id, int it)
             for(int j=j_x_s; j < j_x_e; j++) {
                 // #pragma acc loop gang(16), worker(32)
                 for(int i=i_y_s ; i < i_y_e; i++) {
+                    // new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s] = a[j][i] - 0.1 * (a[j][i] - delT * (a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]));
                     if(a[j][i] > MAX_TEMP){
-                        // Apply different update rule if temperature exceeds threshold
+                    //     // printf("---------- sgpu_tb ------------\n");
+                    //     // Apply different update rule if temperature exceeds threshold
+                    //     // new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s] =  delT1 * (a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i] + a[j-1][i-1] + a[j-1][i+1] + a[j+1][i-1] + a[j+1][i+1]);
                         new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s] = a[j][i] - 0.1 * (a[j][i] - delT * (a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]));
+                        // new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s] = 25.0;
                     }
                     else{
-                        // 5 points stencil computation
+                    //     // 5 points stencil computation
                         new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s] = delT * (a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
                     }
+                    // printf("else: %f(%p)=new_b[%d][%d], a[%d][%d]=%f(%p), a[%d][%d]=%f, a[%d][%d]=%f, a[%d][%d]=%f, a[%d][%d]=%f\n", new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s], &new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s], j-j_x_s+nb_xx_s, i-i_y_s+nb_yy_s, j+1, i, a[j+1][i], &a[j+1][i], j-1, i, a[j-1][i], j, i+1, a[j][i+1], j, i-1, a[j][i-1], j, i, a[j][i]);
                 }
             }
 
@@ -186,13 +205,17 @@ void sgpu_tb(int x, int y, int n, int id, int it)
         #pragma acc kernels present(xx_s, yy_s, len_x, len_y, a[xx_s:len_x][yy_s:len_y], b[x:n][y:n]) 
         for(int j=x; j < (x+n); j++){
             for(int i=y; i < (y+n); i++){
+                // b[j][i] = a[j][i] - 0.1 * (a[j][i] - delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]));
                 if(a[j][i] > MAX_TEMP){
+                //     // printf("----------last sgpu_tb ------------\n");
+                //     // b[j][i] = delT1 * (a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i] + a[j-1][i-1] + a[j-1][i+1] + a[j+1][i-1] + a[j+1][i+1]);
                     b[j][i] = a[j][i] - 0.1 * (a[j][i] - delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]));
                 }
                 else{
                     b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
-                        // + a[j-1][i-1] + a[j-1][i+1] + a[j+1][i-1] + a[j+1][i+1] );
+                //         // + a[j-1][i-1] + a[j-1][i+1] + a[j+1][i-1] + a[j+1][i+1] );
                 }
+                // printf("else: b[%d][%d]=%f(%p), a[%d][%d]=%f(%p), a[%d][%d]=%f, a[%d][%d]=%f, a[%d][%d]=%f, a[%d][%d]=%f\n", j, i, b[j][i], &b[j][i], j+1, i, a[j+1][i], &a[j+1][i], j-1, i, a[j-1][i], j, i+1, a[j][i+1], j, i-1, a[j][i-1], j, i, a[j][i]);
             }}      
     }
     // free(new_b);
@@ -252,15 +275,18 @@ void scpu_tb(int x, int y, int n, int id, int it)
         for(int j=j_x_s; j < j_x_e; j++) {
             #pragma omp simd
             for(int i=i_y_s; i < i_y_e; i++) {
+                // new_b[j][i] = new_a[j][i] - 0.1 * (new_a[j][i] - delT * (new_a[j+1][i] + new_a[j-1][i] + new_a[j][i+1] + new_a[j][i-1] + new_a[j][i]));
                 if(new_a[j][i] > MAX_TEMP){
+                //     // fprintf(stderr,"---------- scpu_tb ------------\n");
+                //     // new_b[j][i] = delT1 * (new_a[j+1][i] + new_a[j-1][i] + new_a[j][i+1] + new_a[j][i-1] + new_a[j][i] + new_a[j-1][i-1] + new_a[j-1][i+1] + new_a[j+1][i-1] + new_a[j+1][i+1]);
                     new_b[j][i] = new_a[j][i] - 0.1 * (new_a[j][i] - delT * (new_a[j+1][i] + new_a[j-1][i] + new_a[j][i+1] + new_a[j][i-1] + new_a[j][i]));
-                    // fprintf("new_b[j][i]=%f, new_a[j+1][i]=%f, new_a[j-1][i]=%f, new_a[j][i+1]=%f, new_a[j][i-1]=%f, new_a[j][i]=%f\n", new_b[j][i], new_a[j+1][i], new_a[j-1][i], new_a[j][i+1], new_a[j][i-1], new_a[j][i]);
+                //     // fprintf(stderr,"if: new_b[j][i]=%f, new_a[j+1][i]=%f, new_a[j-1][i]=%f, new_a[j][i+1]=%f, new_a[j][i-1]=%f, new_a[j][i]=%f\n", new_b[j][i], new_a[j+1][i], new_a[j-1][i], new_a[j][i+1], new_a[j][i-1], new_a[j][i]);
                 }
                 else
                 {
                     new_b[j][i] = delT * (new_a[j+1][i] + new_a[j-1][i] + new_a[j][i+1] + new_a[j][i-1] + new_a[j][i]);
-                    // fprintf(stderr,"new_b[%d][%d]=%f(%p), new_a[%d][%d]=%f(%p), new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f\n", j, i, new_b[j][i], &new_b[j][i], j+1, i, new_a[j+1][i], &new_a[j+1][i], j-1, i, new_a[j-1][i], j, i+1,  new_a[j][i+1], j, i-1, new_a[j][i-1], j, i, new_a[j][i]);
-                            // + new_a[j-1][i-1] + new_a[j-1][i+1] + new_a[j+1][i-1] + new_a[j+1][i+1] + new_a[j][i]);
+                //     // fprintf(stderr,"else: new_b[%d][%d]=%f(%p), new_a[%d][%d]=%f(%p), new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f\n", j, i, new_b[j][i], &new_b[j][i], j+1, i, new_a[j+1][i], &new_a[j+1][i], j-1, i, new_a[j-1][i], j, i+1,  new_a[j][i+1], j, i-1, new_a[j][i-1], j, i, new_a[j][i]);
+                //             // + new_a[j-1][i-1] + new_a[j-1][i+1] + new_a[j+1][i-1] + new_a[j+1][i+1] + new_a[j][i]);
                 }
         }}
         double (* tmp)[nn];
@@ -282,15 +308,19 @@ void scpu_tb(int x, int y, int n, int id, int it)
     for(int j=x; j < (x+n); j++){
         #pragma omp simd
         for(int i=y; i < (y+n); i++){
+            // b[j][i] = new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL] - 0.1 * (new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL] -  delT * (new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL]));
             if(new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL] > MAX_TEMP)
             {
+            //     // fprintf(stderr,"---------- last scpu_tb ------------\n");
+            //     // b[j][i] = delT1 * (new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL]
+            //     //    + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL+1]);
                 b[j][i] = new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL] - 0.1 * (new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL] -  delT * (new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL]));
             }
             else
             {
                 b[j][i] = delT * (new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL]);
-                   // + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL]);
-                // fprintf(stderr,"b[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f\n", j, i, b[j][i], j+1, i, new_a[j+1][i], j-1, i, new_a[j-1][i], j, i+1,  new_a[j][i+1], j, i-1, new_a[j][i-1], j, i, new_a[j][i]);            
+            //        // + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL]);
+            //     // fprintf(stderr,"b[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f\n", j, i, b[j][i], j+1, i, new_a[j+1][i], j-1, i, new_a[j-1][i], j, i+1,  new_a[j][i+1], j, i-1, new_a[j][i-1], j, i, new_a[j][i]);            
             }
         }}
     // free(new_a);
@@ -357,13 +387,13 @@ void cpu_tb(int x, int y, int n, int it)
         for(int j=j_x_s; j < j_x_e; j++) {
             for(int i=i_y_s; i < i_y_e; i++) {
                 if(new_c[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL]>MAX_TEMP)
-            {
-                new_d[j][i] =  new_c[j+1][i] - 0.1 * (new_c[j+1][i] -  delT * (new_c[j+1][i] + new_c[j-1][i] + new_c[j][i+1] + new_c[j][i-1] + new_c[j][i]));
-            }
-            else
-            {
-                new_d[j][i] = delT * (new_c[j+1][i] + new_c[j-1][i] + new_c[j][i+1] + new_c[j][i-1] + new_c[j][i]);
-            }
+                {
+                    new_d[j][i] =  new_c[j+1][i] - 0.1 * (new_c[j+1][i] -  delT * (new_c[j+1][i] + new_c[j-1][i] + new_c[j][i+1] + new_c[j][i-1] + new_c[j][i]));
+                }
+                else
+                {
+                    new_d[j][i] = delT * (new_c[j+1][i] + new_c[j-1][i] + new_c[j][i+1] + new_c[j][i-1] + new_c[j][i]);
+                }
 
                 // new_d[j][i] = delT * (new_c[j+1][i] + new_c[j-1][i] + new_c[j][i+1] + new_c[j][i-1] + new_c[j][i]);
                 // new_d[j][i] = delT * (new_c[j+1][i] + new_c[j-1][i] + new_c[j][i+1] + new_c[j][i-1] 
