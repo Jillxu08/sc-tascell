@@ -49,7 +49,9 @@
     (def it int))
 
 (def (task-body blockTask)
-    (block_para this.param this.n this.i1 this.i2 this.it))
+;; (csym::fprintf stderr "task-body: worker_id=%d ~%" WORKER-ID)
+    (block_para this.param this.n this.i1 this.i2 this.it)
+    )
 
 (def (task-body stencil-start)
   (decl tp (array (struct timeval) 2))
@@ -69,6 +71,7 @@
   (= b (cast (ptr (array double (+ N 2))) (csym::malloc (* (+ N 2) (+ N 2) (sizeof double)))))
   (= c (cast (ptr (array double (+ N 2))) (csym::malloc (* (+ N 2) (+ N 2) (sizeof double)))))
   (= d (cast (ptr (array double (+ N 2))) (csym::malloc (* (+ N 2) (+ N 2) (sizeof double)))))
+  (= material (cast (ptr (array double (+ N 2))) (csym::malloc (* (+ N 2) (+ N 2) (sizeof double)))))
 
   (def i int)
   (def j int)
@@ -92,8 +95,9 @@
   (csym::srand 17)
   (for ((= i 0) (< i (+ N 2)) (inc i))
     (for ((= j 0) (< j (+ N 2)) (inc j))
-      (= (aref a i j) (+ 20.0 (% (csym::rand) 10))) ;Initialize temperatures randomly between 20 and 30
+      (= (aref a i j) (+ 0.0 (% (csym::rand) 100))) ;Initialize temperatures randomly between 20 and 30
       (= (aref c i j) (aref a i j))
+      ;; (= (aref material i j) (% (+ i j) 3))
    ))
   (for ((= i 0) (< i (+ N 2)) (inc i))
     (= (aref b i 0) (aref a i 0))
@@ -120,13 +124,14 @@
   ;; (csym::printpointer b)
   ;; (csym::printpointer c)
   ;; (csym::printpointer d)
+  ;; (csym::printpointer material)
 
-  ;; (csym::fprintf stderr "stencil_para start iteration~%")
+  (csym::fprintf stderr "stencil_para start iteration~%")
   (csym::fprintf stderr "------------------- time -----------------~%")
   (csym::gettimeofday tp 0)
   (stencil x y N)
   (csym::gettimeofday (+ tp 1) 0)
-  ;; (csym::pthread_mutex_destroy (ptr myMutex))
+  (csym::pthread_mutex_destroy (ptr myMutex))
   (csym::fprintf stderr "time_gpu: %5.4f~%" (csym::elapsed-time tp))
   
   ;; (csym::fprintf stderr "stencil_seq start iteration~%")
@@ -187,14 +192,23 @@
 
 (def (stencil_recursive x y n it)(wfn void int int int int)
   (defs int i j k)
-
+  ;; (defs th int)
+  ;; (defs count int)
+  ;; (= th (/ N 2))
+  ;; (= count 0)
   ;; (if (and (<= n th_gpu1) (< WORKER-ID 1))
-  (if (and (<= n th_gpu1) (> n th_gpu2) (< WORKER-ID 1))
+  ;;  (if (and (<= n th_gpu1) (>= n th_gpu2) (== (csym::pthread_mutex_trylock (ptr myMutex)) 0))
+  (if (and (<= n th_gpu1) (> n th_gpu2) (== (csym::pthread_mutex_trylock (ptr myMutex)) 0))
     (begin
       ;; (csym::fprintf stderr "tascell:worker_id=%d, it=%d, n=%d, x=%d, y=%d ~%" WORKER-ID it n x y)
       (csym::sgpu_tb x y n WORKER-ID it) 
+      ;; (csym::gpu x y n WORKER-ID it)
+      (csym::pthread_mutex_unlock (ptr myMutex))
+
+      ) ;relase lock
+      ;; (csym::perror "pthread_mutex_trylock ~%") 
       ;; (csym::gpu x y n WORKER-ID it) 
-    )
+    ;; )
     (begin 
       ;; (if (< n 0)
       (if (<= n th_cpu)

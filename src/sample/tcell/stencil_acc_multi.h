@@ -1,12 +1,17 @@
-#define N 65536L
+#define N 16384
 // // 131072L, 65536L, 32768, 16384, 8192, 4096, 2048
 // #define th_gpu1 4096 // th_gpu > BLOCK_LEVEL
 // #define th_gpu2 1024
 // #define th_cpu 128
 #define delT (1/5.0)
-#define MAX_TEMP 25.0 // Temperature threshold
+// #define MAX_TEMP 25.0 // Temperature threshold
 // #define It 500
 // #define BLOCK_LEVEL 30
+// 热传导系数
+// #define CONDUCTIVITY_0 0.1
+// #define CONDUCTIVITY_1 0.2
+// #define CONDUCTIVITY_2 0.3
+
 
 extern int th_gpu1, th_gpu2;
 extern int th_cpu;
@@ -17,6 +22,7 @@ extern double (* restrict a)[N+2];
 extern double (* restrict b)[N+2];
 extern double (* restrict c)[N+2];
 extern double (* restrict d)[N+2];
+extern double (* restrict material)[N+2];
 
 double get_time();
 void printarray(int p, int q, double arr[p][q]);
@@ -29,14 +35,6 @@ void cpu_tb(int x, int y, int n, int it);
 void cpu(int x, int y, int n, int id, int it);
 void seq_cpu(int j, int i, int it);
 
-// issues:
-// 1.只有gpu函数，用2个core时， 
-// ------------------- time -----------------
-// tascell:worker_id=0, it=0, n=16, x=1, y=1 
-// tascell:worker_id=0, it=0, n=16, x=1, y=17 
-// srun: error: ng0008: task 0: Segmentation fault (core dumped)
-
-
 
 // ------ size ----------
 // system G
@@ -48,8 +46,8 @@ void seq_cpu(int j, int i, int it);
 // N_max = 2^16 = 65,536; th_max = 2^15 = 32,768;
 
 
-
-
+// cpu cache 128m * 2, (200W) DDR4-3200.
+// gpu cache 40m 
 
 
 //  a[th+2B]*[th+2B], new_b[th+2B]*[th+2B], b[th][th]

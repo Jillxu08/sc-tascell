@@ -35,6 +35,7 @@ int main(int argc, const char * argv[]) {
       }
     }
   }
+  // printf('finish');
   FILE * fp;
   fp = fopen ("u.data","w");
   for(j=0; j<=NY; j++){
