@@ -29,7 +29,7 @@ MOPT=-acc
 # OPT=-O3 -lm -std=c99 -mcmodel=medium -march=native $(MOPT) $(CFLAGS) $(LDFLAGS) mm_cu.c
 
 # OPT=-O3 -lm -march=native -Mvect -Minline -Mconcur -std=c99 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
-OPT=-O3 -lm -march=native -std=c99 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
+OPT=-O3 -lm -march=native -std=c99 -gpu=cc61 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD)
 # mm_c_th.c
 # OPT+=-mcmodel=medium
 # OPT=-O3 -g $(MOPT) -gpu=cc60,cuda11.0,pinned th.c
@@ -66,7 +66,7 @@ endif
 # icc-c, icc-lw, and icc-clos}
 # By default, this Makefile makes all ALL_PROGS. You can make just one of targets by specifying the target file name,
 # (e.g., "make fib-gcc")
-APPS=fib fib-guard fib-try fib-thr lu cmp pen pen-excep pen6x17 pen6x17-guard pen6x17-try pen6x17-thr nq nq-try nq-thr grav matmul spanning bcast minmax mm_cu stencil_para stencil_re stencil_para1 stencil_para_gpu stencil_para_multi
+APPS=fib fib-guard fib-try fib-thr lu cmp pen pen-excep pen6x17 pen6x17-guard pen6x17-try pen6x17-thr nq nq-try nq-thr grav matmul spanning bcast minmax mm_cu stencil_para stencil_re stencil_para1 stencil_para_gpu stencil_para_multi mandelbrot
 # copine0 copine1 copine2 copine3 copine4 copine0d copine1d copine3d copine3v_1 copine3v copine3v_2 copine3v_2_1 copine3v_2_1_oh copine3v_2_2 copine3v_2_1_oh_th copine3-sparse
 C_PROGS=$(addsuffix -c,$(APPS))
 GCC_PROGS=$(addsuffix -gcc,$(APPS))
