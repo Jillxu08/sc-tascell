@@ -10,28 +10,40 @@ SC2C_OPT+=-D PROFILE        # validate profiling
 # Command for XC Cube (an extended GCC that supports L-Closures and Closures)
 XCC=xcc
 # Command for gcc
-GCC=nvc #$(XCC) 
+# GCC=gcc #$(XCC) 
+# GCC=nvc #$(XCC) 
 # Command for Intel C Compiler
 ICC=icc
 # Command for OpenMP offload to GPU
 # MOPT=-fopenmp -foffload=nvptx-none
 # MOPT=-fopenacc -foffload=nvptx-none
-MOPT=-acc
+# MOPT=-acc=gpu
 
-# for mm using blas
-# MOPT= -lopenblas -lm -lpthread
-# CFLAGS=-I/usr/include/openblas
-# for mm using nvblas
-# MOPT=-lnvblas -lm -lpthread
-# CFLAGS=-I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/include 
-# LDFLAGS=-L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/lib64 -lcudart 
+# 1.for mandelbrot.tcell
+GCC=nvc
+OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc61 -march=native -mp -msse4.2 -Minfo=accel -lm $(MOPT) $(CFLAGS) $(LDFLAGS) mandelbrot_acc.c -Xlinker --no-relax
 
-# OPT=-O3 -lm -std=c99 -mcmodel=medium -march=native $(MOPT) $(CFLAGS) $(LDFLAGS) mm_cu.c
+# 2.1 for mm_cu.tcell using openblas, 注意注释掉mm_cu.c的中的cuda头文件
+# GCC=nvc
+# MOPT=-lopenblas
+# # CFLAGS=-I/usr/include/openblas
+# # LDFLAGS=-L/usr/lib64
+# OPT=-O3 -lm -std=c99 -mcmodel=medium -acc=gpu -march=native mm_cu.c $(MOPT) $(CFLAGS) $(LDFLAGS) -Xlinker --no-relax
+
+
+# 2.2 for mm_cu.tcell using nvblas
+# GCC=nvc
+# MOPT=-lnvblas -lcudart 
+# CFLAGS=-I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/include -I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/math_libs/include
+# LDFLAGS=-L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/lib64 -L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/math_libs/lib64 
+# OPT=-O3 -lm -std=c99 -mcmodel=medium -std=c99 -gpu=cc61 -march=native mm_cu.c $(MOPT) $(CFLAGS) $(LDFLAGS) -Xlinker --no-relax
+
+# 3. for stencil_para_multi.tcell
+# GCC=nvc
+# OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc61 -march=native -mp -msse4.2 -Minfo=accel -lm $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
 
 # OPT=-O3 -lm -march=native -Mvect -Minline -Mconcur -std=c99 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
-OPT=-O3 -lm -march=native -std=c99 -gpu=cc61 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD)
-# mm_c_th.c
-# OPT+=-mcmodel=medium
+# OPT=-O3 -lm -march=native -std=c99 -gpu=cc61 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD)
 # OPT=-O3 -g $(MOPT) -gpu=cc60,cuda11.0,pinned th.c
 
 # Keyword for L-Closures and Closures in XC Cube. Don't modify.
@@ -66,7 +78,7 @@ endif
 # icc-c, icc-lw, and icc-clos}
 # By default, this Makefile makes all ALL_PROGS. You can make just one of targets by specifying the target file name,
 # (e.g., "make fib-gcc")
-APPS=fib fib-guard fib-try fib-thr lu cmp pen pen-excep pen6x17 pen6x17-guard pen6x17-try pen6x17-thr nq nq-try nq-thr grav matmul spanning bcast minmax mm_cu stencil_para stencil_re stencil_para1 stencil_para_gpu stencil_para_multi mandelbrot
+APPS=fib fib-guard fib-try fib-thr lu cmp pen pen-excep pen6x17 pen6x17-guard pen6x17-try pen6x17-thr nq nq-try nq-thr grav matmul spanning bcast minmax mm_cu stencil_para stencil_re stencil_para1 stencil_para_gpu stencil_para_multi mandelbrot mandelbrot_gpu
 # copine0 copine1 copine2 copine3 copine4 copine0d copine1d copine3d copine3v_1 copine3v copine3v_2 copine3v_2_1 copine3v_2_1_oh copine3v_2_2 copine3v_2_1_oh_th copine3-sparse
 C_PROGS=$(addsuffix -c,$(APPS))
 GCC_PROGS=$(addsuffix -gcc,$(APPS))
