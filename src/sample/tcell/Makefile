@@ -19,9 +19,20 @@ ICC=icc
 # MOPT=-fopenacc -foffload=nvptx-none
 # MOPT=-acc=gpu
 
-# 1.for mandelbrot.tcell
+# 0.for hmat_gen.tcell
 GCC=nvc
-OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc61 -march=native -mp -msse4.2 -Minfo=accel -lm $(MOPT) $(CFLAGS) $(LDFLAGS) mandelbrot_acc.c -Xlinker --no-relax
+OPT=-std=c11 -O3 -lm -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -g -o hmat_all
+# CFLAGS=-I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/comm_libs/12.2/openmpi4/openmpi-4.1.5/include
+# LDFLAGS=-L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/comm_libs/12.2/openmpi4/openmpi-4.1.5/lib
+# OPT=-std=c11 -O3 -lm -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -g $(CFLAGS) $(LDFLAGS) -lmpi -lpthread -o hmat_all
+
+# 1.for mandelbrot.tcell
+# GCC=nvc
+# OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc61 -march=native -mp -msse4.2 -Minfo=accel -lm $(MOPT) $(CFLAGS) $(LDFLAGS) mandelbrot_acc.c -Xlinker --no-relax
+# OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc80 -march=native -mp -msse4.2 -Minfo=accel -lm $(MOPT) $(CFLAGS) $(LDFLAGS) mandelbrot_acc.c -Xlinker --no-relax
+
+# OPT=-O3 -std=c99 -mcmodel=medium -fopenacc -march=native -msse4.2 -lm $(MOPT) $(CFLAGS) $(LDFLAGS) mandelbrot_acc.c -Xlinker --no-relax
+
 
 # 2.1 for mm_cu.tcell using openblas, 注意注释掉mm_cu.c的中的cuda头文件
 # GCC=nvc
@@ -78,7 +89,7 @@ endif
 # icc-c, icc-lw, and icc-clos}
 # By default, this Makefile makes all ALL_PROGS. You can make just one of targets by specifying the target file name,
 # (e.g., "make fib-gcc")
-APPS=fib fib-guard fib-try fib-thr lu cmp pen pen-excep pen6x17 pen6x17-guard pen6x17-try pen6x17-thr nq nq-try nq-thr grav matmul spanning bcast minmax mm_cu stencil_para stencil_re stencil_para1 stencil_para_gpu stencil_para_multi mandelbrot mandelbrot_gpu
+APPS=fib fib-guard fib-try fib-thr lu cmp pen pen-excep pen6x17 pen6x17-guard pen6x17-try pen6x17-thr nq nq-try nq-thr grav matmul spanning bcast minmax mm_cu stencil_para stencil_re stencil_para1 stencil_para_gpu stencil_para_multi mandelbrot mandelbrot_gpu hmat_gen hmat_all
 # copine0 copine1 copine2 copine3 copine4 copine0d copine1d copine3d copine3v_1 copine3v copine3v_2 copine3v_2_1 copine3v_2_1_oh copine3v_2_2 copine3v_2_1_oh_th copine3-sparse
 C_PROGS=$(addsuffix -c,$(APPS))
 GCC_PROGS=$(addsuffix -gcc,$(APPS))

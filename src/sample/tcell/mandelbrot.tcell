@@ -10,7 +10,8 @@
 (c-exp "#include <pthread.h>")
 (c-exp "#include \"mandelbrot_acc.h\"")
 
-(defs (array int (* HEIGHT WIDTH)) rslt_seq rslt_par)
+(defs (array int HEIGHT WIDTH) rslt_seq rslt_par)
+;; (defs (array int (* HEIGHT WIDTH)) rslt_seq rslt_par)
 
 (decl myMutex pthread_mutex_t PTHREAD_MUTEX_INITIALIZER)
 
@@ -67,18 +68,17 @@
     ;; (csym::gpu_initialize)
     
     (= start1 (csym::get-wall-time))
-    ;; (par-mandelbrot 0 HEIGHT)
-     (par-mandelbrot 0 (* WIDTH HEIGHT))
+    (par-mandelbrot 0 HEIGHT)
+    ;;  (par-mandelbrot 0 (* WIDTH HEIGHT))
     ;; (csym::gpu_trans)
     (= end1 (csym::get-wall-time))
     (= elapsed1 (- end1 start1))
     (csym::fprintf stderr "time = %5.4f  ~%" elapsed1)
 
     ;; (csym::seq-mandelbrot)
-    ;; (if (csym::valid-check rslt_par rslt_seq)
+    ;; (if (csym::valid-check)
     ;;     (csym::fprintf stderr "RIGHT~%")
     ;;     (csym::fprintf stderr "WRONG~%"))
-
     ;; (csym::print-rslt)
 
     (def fp (ptr FILE))
@@ -88,7 +88,8 @@
     (for ((= y 0) (< y HEIGHT) (inc y))
         (for ((= x 0) (< x WIDTH) (inc x))
             (defs unsigned-char r g b)
-            (def value int (aref rslt_par (+ (* y WIDTH) x)))
+            (def value int (aref rslt_par y x)) 
+            ;; (def value int (aref rslt_par (+ (* y WIDTH) x)))
             (if (== value MAX_ITERATIONS)
                 (begin
                     (= r 0)
@@ -135,7 +136,8 @@
             (= value (csym::in_mandelbrot real imag))
             ;; (= value (csym::in_mandelbrot real imag))
             ;; (= value (csym::in_mandelbrot reali mag (aref z_real_seq y x) (aref z_imag_seq y x)))
-            (= (aref rslt_seq (+ (* y WIDTH) x)) value)
+            (= (aref rslt_seq y x) value))
+            ;; (= (aref rslt_seq (+ (* y WIDTH) x)) value)
 
             ;; (defs unsigned-char r g b)
 
@@ -164,15 +166,15 @@
             ;; (csym::fputc r fp)
             ;; (csym::fputc g fp)
             ;; (csym::fputc b fp)
-        )) 
+        )
     ;; (csym::fclose fp)
-    )
+)
 
 (def (par-mandelbrot i1 i2) (wfn void int int)
     ;; (def x int)
     ;; (def y int)
     ;; (csym::fprintf stderr "x1 = %d x2 = %d ~%" x1 x2)
-    (defs double start2 start3 end2 end3 elapsed2 elapsed3)
+    ;; (defs double start2 start3 end2 end3 elapsed2 elapsed3)
 
     (def n int (- i2 i1))
     ;; (csym::fprintf stderr "i1 = %d, i2 = %d ~%" i1 i2)
@@ -180,7 +182,9 @@
         ;; (if (and (<= n th_gpu1) (>= n th_gpu2) (== WORKER-ID 0))  (>= i1 16000000)
         ;; (if (and (<= n th_gpu1) (>= n th_gpu2) (<= i2 250000000) (== (csym::pthread_mutex_trylock (ptr myMutex)) 0))
         (if (and (<= n th_gpu1) (>= n th_gpu2) (== (csym::pthread_mutex_trylock (ptr myMutex)) 0))
+        ;; (if (and (<= n th_gpu1) (>= n th_gpu2) (== WORKER_ID 0))
             (begin
+                ;; TCELL-CHECK-REQ 
                 ;; (csym::fprintf stderr "GPU: WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2) 
                 (csym::mb_acc i1 i2)
                 (csym::pthread_mutex_unlock (ptr myMutex)) ;relase lock
@@ -232,8 +236,8 @@
     (for ((= y 0) (< y HEIGHT) (inc y))
         (for ((= x 0) (< x WIDTH) (inc x))
             ;; (csym::fprintf stderr "rslt_par=%d, rslt_seq=%d~%" (aref rslt_par y x) (aref rslt_seq y x))
-            (if (> (csym::fabs(- (aref rslt_par (+ (* y WIDTH) x)) (aref rslt_seq (+ (* y WIDTH) x)))) 1)
-                ;; if (not (== (aref rslt_par y x) (aref rslt_seq y x)))
+            ;; (if (> (csym::fabs(- (aref rslt_par (+ (* y WIDTH) x)) (aref rslt_seq (+ (* y WIDTH) x)))) 1)
+                (if (not (== (aref rslt_par y x) (aref rslt_seq y x)))
 
                 (begin 
                     ;; (csym::fprintf stderr "y=%d, x=%d, rslt_par=%d, rslt_seq=%d~%" y x (aref rslt_par y x) (aref rslt_seq y x))
@@ -255,18 +259,21 @@
     (for ((= y 0) (< y HEIGHT) (inc y))
         (= (aref count_in_madelbrot y) 0)
         (for ((= x 0) (< x WIDTH) (inc x))
-            ;; (if (> (csym::fabs(- (aref rslt_par y x) (aref rslt_seq y x))) 1)  
-            ;;     ;; if (not (== (aref rslt_seq y x) (aref rslt_par y x)))
-            ;;     (csym::fprintf stderr "x1 = %d x2 = %d seq = %d par = %d ~%" y x  (aref rslt_seq y x) (aref rslt_par y x))
-            ;;     ;; (csym::fprintf stderr "x1 = %d x2 = %d seq = %d par = %d , z_real_seq= %f, z_real_par =%f, z_imag_seq=%f, z_imag_par=%f ~%" y x  (aref rslt_seq y x) (aref rslt_par y x) (aref z_real_seq y x) (aref z_real_par y x) (aref z_imag_seq y x) (aref z_imag_par y x))
-            ;;     )
-            (+= totle_count (aref rslt_par (+ (* y WIDTH) x)))
-            (if (== (aref rslt_par (+ (* y WIDTH) x)) MAX_ITERATIONS)               
-                (begin
-                    (inc count))
-                ;; (csym::fprintf stderr "x1 = %d x2 = %d par = %d ~%" y x (aref rslt_par y x))            
-                (begin 
-                    (+= (aref count_in_madelbrot y) (aref rslt_par (+ (* y WIDTH) x))))))
-        (csym::fprintf stderr "count_in_madelbrot[%d] = %d ~%" y (aref count_in_madelbrot y)))
-    (csym::fprintf stderr "count = %d ~%" count)
-    (csym::fprintf stderr "totle_count = %d ~%" totle_count))
+            (if (> (csym::fabs(- (aref rslt_par y x) (aref rslt_seq y x))) 1)  
+                ;; if (not (== (aref rslt_seq y x) (aref rslt_par y x)))
+                (csym::fprintf stderr "x1 = %d x2 = %d seq = %d par = %d ~%" y x  (aref rslt_seq y x) (aref rslt_par y x))
+                ;; (csym::fprintf stderr "x1 = %d x2 = %d seq = %d par = %d , z_real_seq= %f, z_real_par =%f, z_imag_seq=%f, z_imag_par=%f ~%" y x  (aref rslt_seq y x) (aref rslt_par y x) (aref z_real_seq y x) (aref z_real_par y x) (aref z_imag_seq y x) (aref z_imag_par y x))
+                )
+            ;; (+= totle_count (aref rslt_par (+ (* y WIDTH) x)))
+            ;; (if (== (aref rslt_par (+ (* y WIDTH) x)) MAX_ITERATIONS)               
+            ;;     (begin
+            ;;         (inc count))
+            ;;     ;; (csym::fprintf stderr "x1 = %d x2 = %d par = %d ~%" y x (aref rslt_par y x))            
+            ;;     (begin 
+            ;;         (+= (aref count_in_madelbrot y) (aref rslt_par (+ (* y WIDTH) x)))))
+        )
+        ;; (csym::fprintf stderr "count_in_madelbrot[%d] = %d ~%" y (aref count_in_madelbrot y))
+    )
+    ;; (csym::fprintf stderr "count = %d ~%" count)
+    ;; (csym::fprintf stderr "totle_count = %d ~%" totle_count)
+)
