@@ -1,0 +1,224 @@
+(%ifndef* NF-TYPE
+  (%defconstant NF-TYPE GCC)) ; one of (GCC LW-SC CL-SC XCC XCCCL)
+(%include "rule/tcell-setrule.sh")
+
+(c-exp "#include <stdio.h>")
+(c-exp "#include <stdlib.h>")
+(c-exp "#include <math.h>")
+(c-exp "#include <time.h>")
+(c-exp "#include <sys/time.h>")
+(c-exp "#include <pthread.h>")
+
+(%defconstant WIDTH 640)
+(%defconstant HEIGHT 640)
+(%defconstant MAX_ITERATIONS 1000)
+(%defconstant TH 4)
+
+(defs (array int HEIGHT WIDTH) rslt-seq rslt-par)
+
+(decl (csym::get-wall-time) (fn double void))
+(decl (csym::is-in-mandelbrot real imag) (fn int double double))
+(decl (csym::seq-mandelbrot) (fn void))
+(decl (par-mandelbrot x1 x2) (wfn void int int))
+(decl (csym::valid-check) (fn int))
+(decl (csym::print-rslt) (fn void))
+
+(def (task mm-start))
+
+(def (task subTask)
+    (def i1 int)
+    (def i2 int))
+
+(def (task-body subTask)
+    ;; (csym::fprintf stderr "x1 = %d x2 = %d ~%" this.x1 this.x2 )
+    (par-mandelbrot this.i1 this.i2)
+)
+
+(def (task-body mm-start)
+    (def x int)
+    (def y int)
+    (defs double start1 end1)
+    (defs double start2 end2)
+    (def elapsed1 double)
+    (def elapsed2 double)
+    
+    (def fp (ptr FILE))
+    (= fp (csym::fopen "mandelbrot.ppm" "wb"))
+    (csym::fprintf fp "P6~%%d %d~%255~%" WIDTH HEIGHT)
+
+    (csym::seq-mandelbrot)
+    (par-mandelbrot 0 (* WIDTH HEIGHT))
+    (if (csym::valid-check rslt-par rslt-seq)
+        (csym::fprintf stderr "RIGHT~%")
+        (csym::fprintf stderr "WRONG~%")
+    )
+
+    (csym::print-rslt)
+
+    (for ((= y 0) (< y HEIGHT) (inc y))
+        (for ((= x 0) (< x WIDTH) (inc x))
+            (defs unsigned-char r g b)
+            (def value int (aref rslt-seq y x))
+            (if (== value MAX_ITERATIONS)
+                (begin
+                    (= r 0)
+                    (= g 0)
+                    (= b 0)
+                )
+                (begin
+                    (= value (cast (int) (/ (* value 255) MAX_ITERATIONS)))
+                    (= r value)
+                    (= g value)
+                    (= b 255)
+                )
+            )
+            (csym::fputc r fp)
+            (csym::fputc g fp)
+            (csym::fputc b fp)
+        )
+    )
+    (csym::fclose fp)
+)
+
+(def (csym::is-in-mandelbrot real imag) (fn int double double)
+    (def z_real double 0)
+    (def z_imag double 0)
+    (def z_real_sq double 0)
+    (def z_imag_sq double 0)
+    (def iterations int 0)
+
+    (while (and (<= (+ z_real_sq z_imag_sq) 4) (< iterations MAX_ITERATIONS))
+        (= z_imag (+ (* 2 (* z_real z_imag)) imag))
+        (= z_real (+ (- z_real_sq z_imag_sq) real))
+        (= z_real_sq (* z_real z_real))
+        (= z_imag_sq (* z_imag z_imag))
+        (inc iterations)
+    )
+
+    (return iterations)
+)
+
+(def (csym::seq-mandelbrot) (fn void)
+    (def x int)
+    (def y int)
+    (for ((= y 0) (< y HEIGHT) (inc y))
+        (for ((= x 0) (< x WIDTH) (inc x))
+            (def real double)
+            (= real (/ (* (- x (/ WIDTH 2.0)) 4.0) WIDTH))
+            (def imag double)
+            (= imag (/ (* (- y (/ HEIGHT 2.0)) 4.0) HEIGHT))
+            (def value int)
+            (= value (csym::is-in-mandelbrot real imag))
+
+            (= (aref rslt-seq y x) value)
+        )
+    )
+)
+
+(def (par-mandelbrot i1 i2) (wfn void int int)
+    (def i int)
+    (def x int)
+    (def y int)
+    ;; (csym::fprintf stderr "x1 = %d x2 = %d ~%" x1 x2)
+
+    (def n int (- i2 i1))
+        (if (and (<= n th_gpu1) (>= n th_gpu2) (== (csym::pthread_mutex_trylock (ptr myMutex)) 0))
+            (begin
+                (csym::mb_acc i1 i2)
+                (csym::pthread_mutex_unlock (ptr myMutex)))
+            (begin
+                (if (<= n th_cpu)
+                    (begin 
+                        (csym::mb_acc_cpu i1 i2))
+                    (begin
+                        (def mid int)
+                        (= mid (/ (+ i1 i2) 2))
+                        (do-two 
+                            (par-mandelbrot i1 mid)
+                            (par-mandelbrot mid i2)
+                            (handles subTask
+                                (:put
+                                    (= this.i1 mid)
+                                    (= this.i2 i2)
+                                )
+                                (:get))))))))
+
+
+    ;; (if (> n TH)
+    ;;     (begin
+    ;;         (def mid int)
+    ;;         (= mid (/ (+ i1 i2) 2))
+    ;;         (do-two 
+    ;;             (par-mandelbrot i1 mid)
+    ;;             (par-mandelbrot mid i2)
+    ;;             (handles subTask
+    ;;                 (:put
+    ;;                     (= this.i1 mid)
+    ;;                     (= this.i2 i2)
+    ;;                 )
+    ;;                 (:get)
+    ;;             )
+    ;;         )
+    ;;     )
+    ;;     (begin
+    ;;         ;; (for ((= y x1) (< y x2) (inc y))
+    ;;         ;;     (for ((= x 0) (< x WIDTH) (inc x))
+    ;;             (for ((= i i1) (< i i2) (inc i))
+    ;;                 (= y (/ i WIDTH))
+    ;;                 (= x (% i WIDTH))
+
+    ;;                 (def real double)
+    ;;                 (= real (/ (* (- x (/ WIDTH 2.0)) 4.0) WIDTH))
+    ;;                 (def imag double)
+    ;;                 (= imag (/ (* (- y (/ HEIGHT 2.0)) 4.0) HEIGHT))
+    ;;                 (def value int)
+    ;;                 (= value (csym::is-in-mandelbrot real imag))
+
+    ;;                 (= (aref rslt-par y x) value)
+    ;;             )
+    ;;         ;;     )
+    ;;         ;; )
+    ;;     )
+    ;; )
+
+
+
+
+
+
+    
+
+
+(def (csym::valid-check rslt-par rslt-seq) (fn int (ptr (array int WIDTH)) (ptr (array int WIDTH)))
+    (def x int)
+    (def y int)
+    (for ((= y 0) (< y HEIGHT) (inc y))
+        (for ((= x 0) (< x WIDTH) (inc x))
+            ;; (csym::fprintf stderr "rslt_par=%d, rslt_seq=%d~%" (aref rslt_par y x) (aref rslt_seq y x))
+            (if (not (== (aref rslt-par y x) (aref rslt-seq y x)))
+                (begin 
+                    (csym::fprintf stderr "y=%d, x=%d, rslt_par=%d, rslt_seq=%d~%" y x (aref rslt_par y x) (aref rslt_seq y x))
+                    (return 0)           
+                )
+            )
+        )
+    )
+    (return 1)
+)
+
+(def (csym::get-wall-time) (fn double void)
+  (decl time (struct timeval))
+  (if (csym::gettimeofday (ptr time) NULL) (begin (return 0)))
+  (return (+ (cast double (fref time tv-sec)) (* (cast double (fref time tv-usec)) 0.000001))))
+
+(def (csym::print-rslt) (fn void)
+    (def x int)
+    (def y int)
+    (for ((= y 0) (< y HEIGHT) (inc y))
+        (for ((= x 0) (< x WIDTH) (inc x))
+            (if (not (== (aref rslt-seq y x) (aref rslt-par y x)))
+                (csym::fprintf stderr "x1 = %d x2 = %d seq = %d par = %d ~%" y x  (aref rslt-seq y x) (aref rslt-par y x))
+            )
+        )
+    )
+)
