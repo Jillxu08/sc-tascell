@@ -3,18 +3,21 @@ OS=${shell uname}
 SC2C=sc2c
 # Options for SC-to-C compiler
 SC2C_OPT=
-SC2C_OPT+=-m              # don't remove intermediate files
+# SC2C_OPT+=-m              # don't remove intermediate files
 # SC2C_OPT+=-D DEBUG=0      # invalidate debugging code
 # SC2C_OPT+=-D NO-EXCEPTION # invalidate exception support
 SC2C_OPT+=-D PROFILE        # validate profiling
 # Command for XC Cube (an extended GCC that supports L-Closures and Closures)
 XCC=xcc
 # Command for gcc
-GCC=gcc #$(XCC)
+# GCC=gcc #$(XCC)
 # Command for Intel C Compiler
 ICC=icc
 # Optimization options for C Compilers
-OPT=-O3 -msse4.2 -g $(MOPT)
+# OPT=-O3 -msse4.2 -g $(MOPT)
+
+GCC=gcc
+OPT=-std=c11 -O3 -lm -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -g bem_data/filling.c bem_data/bem_file.c -o hmat_ct_reds
 
 # Keyword for L-Closures and Closures in XC Cube. Don't modify.
 XCCOPT=-DCT=lightweight
@@ -48,7 +51,7 @@ endif
 # icc-c, icc-lw, and icc-clos}
 # By default, this Makefile makes all ALL_PROGS. You can make just one of targets by specifying the target file name,
 # (e.g., "make fib-gcc")
-APPS=fib fib-guard fib-try fib-thr lu cmp pen pen-excep pen6x17 pen6x17-copy pen6x17-guard pen6x17-try pen6x17-thr nq nq-copy nq-try nq-thr grav matmul spanning bcast minmax copine0 copine1 copine2 copine3 copine4 copine0d copine1d copine3d
+APPS=fib fib-guard fib-try fib-thr lu cmp pen pen-excep pen6x17 pen6x17-copy pen6x17-guard pen6x17-try pen6x17-thr nq nq-copy nq-try nq-thr grav matmul spanning bcast minmax copine0 copine1 copine2 copine3 copine4 copine0d copine1d copine3d hmat_ct_reds
 
 C_PROGS=$(addsuffix -c,$(APPS))
 GCC_PROGS=$(addsuffix -gcc,$(APPS))

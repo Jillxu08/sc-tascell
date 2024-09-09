@@ -334,7 +334,7 @@ int connect_to (char *hostname, unsigned short port)
     dstAddr.sin_port = htons(port);            /* port */
     dstAddr.sin_family = AF_INET;              /* omajinai */
     memcpy((char*)&dstAddr.sin_addr,           /* address */
-           servhost->h_addr, servhost->h_length);
+           servhost->h_addr_list, servhost->h_length);
     
     /* Generate a socket */
     dstSocket = socket(AF_INET, SOCK_STREAM, 0);
