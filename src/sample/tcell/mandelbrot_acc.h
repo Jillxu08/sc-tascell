@@ -1,5 +1,5 @@
-#define WIDTH 400
-#define HEIGHT 100000
+#define WIDTH 8000
+#define HEIGHT 8000
 // 65536, 32768,8 16384, 8192, 4096, 2048
 // #define th_gpu1 0s
 // #define th_gpu2 -1

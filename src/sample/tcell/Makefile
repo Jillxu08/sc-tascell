@@ -20,16 +20,16 @@ ICC=icc
 # MOPT=-acc=gpu
 
 # 0.for hmat_gen.tcell
-GCC=nvc
-OPT=-std=c11 -O3 -lm -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -g -o hmat_all
+# GCC=nvc
+# OPT=-std=c11 -O3 -lm -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -g -o hmat_all
 # CFLAGS=-I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/comm_libs/12.2/openmpi4/openmpi-4.1.5/include
 # LDFLAGS=-L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/comm_libs/12.2/openmpi4/openmpi-4.1.5/lib
 # OPT=-std=c11 -O3 -lm -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -g $(CFLAGS) $(LDFLAGS) -lmpi -lpthread -o hmat_all
 
 # 1.for mandelbrot.tcell
-# GCC=nvc
-# OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc61 -march=native -mp -msse4.2 -Minfo=accel -lm $(MOPT) $(CFLAGS) $(LDFLAGS) mandelbrot_acc.c -Xlinker --no-relax
-# OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc80 -march=native -mp -msse4.2 -Minfo=accel -lm $(MOPT) $(CFLAGS) $(LDFLAGS) mandelbrot_acc.c -Xlinker --no-relax
+GCC=nvc
+# OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc61 -tp skylake -mp -Minfo=accel -lm $(MOPT) $(CFLAGS) $(LDFLAGS) mandelbrot_acc.c -Xlinker --no-relax
+OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc80 -tp zen3 -mp -Minfo=accel -lm $(MOPT) $(CFLAGS) $(LDFLAGS) mandelbrot_acc.c -Xlinker --no-relax
 
 # OPT=-O3 -std=c99 -mcmodel=medium -fopenacc -march=native -msse4.2 -lm $(MOPT) $(CFLAGS) $(LDFLAGS) mandelbrot_acc.c -Xlinker --no-relax
 
@@ -39,7 +39,7 @@ OPT=-std=c11 -O3 -lm -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -g -o hmat_all
 # MOPT=-lopenblas
 # # CFLAGS=-I/usr/include/openblas
 # # LDFLAGS=-L/usr/lib64
-# OPT=-O3 -lm -std=c99 -mcmodel=medium -acc=gpu -march=native mm_cu.c $(MOPT) $(CFLAGS) $(LDFLAGS) -Xlinker --no-relax
+# OPT=-O3 -lm -std=c99 -mcmodel=medium -acc=gpu -tp zen3 mm_cu.c $(MOPT) $(CFLAGS) $(LDFLAGS) -Xlinker --no-relax
 
 
 # 2.2 for mm_cu.tcell using nvblas
@@ -47,11 +47,11 @@ OPT=-std=c11 -O3 -lm -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -g -o hmat_all
 # MOPT=-lnvblas -lcudart 
 # CFLAGS=-I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/include -I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/math_libs/include
 # LDFLAGS=-L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/lib64 -L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/math_libs/lib64 
-# OPT=-O3 -lm -std=c99 -mcmodel=medium -std=c99 -gpu=cc61 -march=native mm_cu.c $(MOPT) $(CFLAGS) $(LDFLAGS) -Xlinker --no-relax
+# OPT=-O3 -lm -std=c99 -mcmodel=medium -std=c99 -gpu=cc61 -tp zen3 mm_cu.c $(MOPT) $(CFLAGS) $(LDFLAGS) -Xlinker --no-relax
 
 # 3. for stencil_para_multi.tcell
 # GCC=nvc
-# OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc61 -march=native -mp -msse4.2 -Minfo=accel -lm $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
+# OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc80 -tp zen3 -mp -Minfo=accel -lm $(MOPT) $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
 
 # OPT=-O3 -lm -march=native -Mvect -Minline -Mconcur -std=c99 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
 # OPT=-O3 -lm -march=native -std=c99 -gpu=cc61 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD)

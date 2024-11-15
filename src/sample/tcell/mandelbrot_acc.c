@@ -1,3 +1,5 @@
+// final version program of hybrid CPU and GPU
+
 #include "mandelbrot_acc.h"
 #include <stdio.h>
 #include <stdlib.h>

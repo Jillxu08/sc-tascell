@@ -1,3 +1,5 @@
+;; final version program of hybrid CPU and GPU
+
 (%ifndef* NF-TYPE
   (%defconstant NF-TYPE GCC)) ; one of (GCC LW-SC CL-SC XCC XCCCL)
 (%include "rule/tcell-setrule.sh")
@@ -188,7 +190,7 @@
                 ;; (csym::fprintf stderr "GPU: WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2) 
                 (csym::mb_acc i1 i2)
                 (csym::pthread_mutex_unlock (ptr myMutex)) ;relase lock
-                ;; (csym::fprintf stderr "GPU: WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2) 
+                (csym::fprintf stderr "GPU: WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2) 
 
                 ;; (csym::fprintf stderr "GPU: WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2)
                 ;; (== (csym::pthread_mutex_trylock (ptr myMutex)) 0)
@@ -205,7 +207,7 @@
                 (if (<= n th_cpu)
                 ;; (if (and (<= n th_cpu) (<= i2 250000000))
                     (begin 
-                        ;; (csym::fprintf stderr "CPU: WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2)
+                        (csym::fprintf stderr "CPU: WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2)
                         ;; (= start3 (csym::get-wall-time))
                         ;; (csym::mb_acc_cpu i1 i2)
                         ;; (= end3 (csym::get-wall-time))
