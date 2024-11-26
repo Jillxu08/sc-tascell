@@ -1,5 +1,34 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <time.h>
+#include <sys/time.h>
 #include "filling.h"
+#ifdef _OPENACC
+#include <openacc.h>
+#endif
 
+// #pragma acc routine(sqrt) seq
+
+// #pragma acc routine seq 
+// double entry_ij(int i, int j);
+
+#pragma acc routine(calloc)
+void *calloc(size_t num, size_t size);
+
+struct cluster* resultCTlist;
+int countCT;
+double (*zgmid)[3];
+double (*bgmid)[3];
+int (*f2n)[3];
+
+// double u[3],v[3],w[3];;
+// int n[3];
+// double xf[3], yf[3], zf[3];
+// double xp, yp, zp;
+
+// when filling the approximate block, calling acaplus
+#pragma acc routine 
 int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, int kmax, double eps, double znrmmat, double pACA_EPS){
   double *prow, *pcol, *pb_ref, *pa_ref;
   int *lrow_done, *lcol_done;
@@ -29,13 +58,13 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
   pa_ref = (double *)malloc(ndl * sizeof(double));
 
   comp_col(zaa, zab, ndl, ndt, k, j_ref, pa_ref, nstrtl, nstrtt, lrow_done);
-
-  double colnorm = cblas_dnrm2(ndl, pa_ref, INCY);
+  
+  double colnorm = simple_dnrm2(ndl, pa_ref, INCY); // blas used›
   int i_ref = minabsvalloc_d(pa_ref, ndl);
   double rownorm = fabs(pa_ref[i_ref]);
   pb_ref = (double *)malloc(ndt * sizeof(double));
   comp_row(zaa, zab, ndl, ndt, k, i_ref, pb_ref, nstrtl, nstrtt, lcol_done);
-  rownorm = cblas_dnrm2(ndt, pb_ref, INCY);
+  rownorm = simple_dnrm2(ndt, pb_ref, INCY); // blas used
 
   double apxnorm = 0.0;
   int lstop_aca = 0;
@@ -112,7 +141,7 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
       for(il=0;il<ndt;il++){
         pb_ref[il] += prow[il] * zinvmax;
       }
-      rownorm = cblas_dnrm2(ndt, pb_ref, INCY);
+      rownorm = simple_dnrm2(ndt, pb_ref, INCY); // blas used
     }
     if(i == i_ref || rownorm < ACA_EPS){
       if(i == i_ref){
@@ -124,7 +153,7 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
         while(i != (i_ref + ndl - 1) % ndl && rownorm < za_ACA_EPS && ntries_row > 0){
           if(lrow_done[i] == 0){
             comp_row(zaa, zab, ndl, ndt, k+1, i, pb_ref, nstrtl, nstrtt, lcol_done);
-            rownorm = cblas_dnrm2(ndt, pb_ref, INCY);
+            rownorm = simple_dnrm2(ndt, pb_ref, INCY);  // blas used
             if(rownorm < ACA_EPS){
               lrow_done[i] = 1;
             }
@@ -143,7 +172,7 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
       for(il=0;il<ndl;il++){
         pa_ref[il] += pcol[il] * zinvmax;
       }
-      colnorm = cblas_dnrm2(ndl, pa_ref, INCY);
+      colnorm = simple_dnrm2(ndl, pa_ref, INCY);  // blas used
     }
     if(j == j_ref || colnorm < ACA_EPS){
       if(j == j_ref){
@@ -155,7 +184,7 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
         while(j != (j_ref + ndt - 1) % ndt && colnorm < za_ACA_EPS && ntries_col > 0){
           if(lcol_done[j] == 0){
             comp_col(zaa, zab, ndl, ndt, k+1, j, pa_ref, nstrtl, nstrtt, lrow_done);
-            colnorm = cblas_dnrm2(ndl, pa_ref, INCY);
+            colnorm = simple_dnrm2(ndl, pa_ref, INCY);  // blas used
             if(colnorm < ACA_EPS){
               lcol_done[j] = 1;
             }
@@ -164,7 +193,7 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
             colnorm = 0.0;
           }
           j = (j+1) % ndt;
-        }
+        } 
         j_ref = (j + ndt - 1) % ndt;
       }
     }
@@ -175,7 +204,7 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
     }
 
     if(lstop_aca == 0){
-      double blknorm = cblas_dnrm2(ndl, pcol, INCY) * cblas_dnrm2(ndt, prow, INCY);
+      double blknorm = simple_dnrm2(ndl, pcol, INCY) * simple_dnrm2(ndt, prow, INCY);  // blas used
       if(k == 0){
         apxnorm = blknorm;
       }else{
@@ -205,8 +234,6 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
 }
 
 void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat){
-  // double start, end;
-  // start = get_wall_time();
   double eps = 1.0e-8;
   double ACA_EPS = 0.9 * eps;
   int kparam = 50;
@@ -218,8 +245,11 @@ void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat){
   int nstrtl = st_lf->nstrtl;
   int nstrtt = st_lf->nstrtt;
   int ltmtx = st_lf->ltmtx;
-  
-  if(ltmtx == 1){
+  int kt;
+
+  int ill, itt;
+ 
+  if(ltmtx == -1){
     st_lf->a1 = (double*)malloc(sizeof(double) * ndt * kparam);
     st_lf->a2 = (double*)malloc(sizeof(double) * ndl * kparam);
     if(!st_lf->a1 || !st_lf->a2){
@@ -227,11 +257,17 @@ void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat){
       exit(99);
     }
 
-    int kt = acaplus(st_lf->a2, st_lf->a1, ndl, ndt, nstrtl, nstrtt, kparam, eps, znrmmat, ACA_EPS);
-    // printf("#fill kt=%d, nstrtl=%d, nstrtt=%d, ndl=%d, ndt=%d\n", kt, nstrtl, nstrtt, ndl, ndt);
-    st_lf->kt = kt;
-    
-    if(kt > kparam){ //Fortran: kt > kparam-1. kt is the rank.
+    #pragma acc data copyin(zgmid[nstrtl:ndl][0:3], f2n[nstrtt:ndt][0:3], bgmid[0:3][0:3]) \
+    // create(u[0:3], v[0:3], w[0:3], xf[0:3], yf[0:3], zf[0:3], xp, yp, zp, norm)  \
+    present(st_lf->a1, st_lf->a2, ndl, ndt, nstrtl, nstrtt, kparam, eps, znrmmat, ACA_EPS)
+    {
+        int kt = acaplus(st_lf->a2, st_lf->a1, ndl, ndt, nstrtl, nstrtt, kparam, eps, znrmmat, ACA_EPS);
+        st_lf->kt = kt;
+    }
+    // #pragma acc exit data delete(u[0:3], v[0:3], w[0:3], xf[0:3], yf[0:3], zf[0:3])
+
+
+    if(kt > kparam){ 
       printf("WARNING: Insufficient k: kt=%d, kparam=%d, nstrtl=%d, nstrtt=%d, ndl=%d, ndt=%d\n", kt, kparam, nstrtl, nstrtt, ndl, ndt);
     }
 
@@ -244,18 +280,20 @@ void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat){
     double (*tempa1)[ndt];
     tempa1 = (double(*)[ndt])st_lf->a1;
 
-    for(il=0;il<ndl;il++){
-      int ill = il + nstrtl;
-      for(it=0;it<ndt;it++){
-        int itt = it + nstrtt;
-        tempa1[il][it] = entry_ij(ill, itt);
-      }
-    }
-  }
-  // end = get_wall_time();
-  // printf("filling time spend: %f", end - start);
-}
+    // fprintf(stderr,"ndt=%d,nstrtt=%d,ndt+nstrtt=%d\n",ndt, nstrtt,ndt+nstrtt);
 
+    #pragma acc parallel loop present(zgmid, f2n, bgmid) copyout(tempa1[0:ndl][0:ndt])
+      for(il=0;il<ndl;il++){
+        ill = il + nstrtl;
+        for(it=0;it<ndt;it++){
+          itt = it + nstrtt;
+          tempa1[il][it] = entry_ij(ill, itt);
+        }
+      }
+  }
+ }
+
+#pragma acc routine 
 void comp_row(double* zaa, double* zab, int ndl, int ndt, int k, int il, double* row, int nstrtl, int nstrtt, int* lrow_done){
   int it;
   for(it=0;it<ndt;it++){
@@ -279,6 +317,7 @@ void comp_row(double* zaa, double* zab, int ndl, int ndt, int k, int il, double*
   }
 }
 
+#pragma acc routine 
 void comp_col(double* zaa, double* zab, int ndl, int ndt, int k, int it, double* col, int nstrtl, int nstrtt, int* lrow_done){
   int il;
 
@@ -303,6 +342,7 @@ void comp_col(double* zaa, double* zab, int ndl, int ndt, int k, int it, double*
   }
 }
 
+#pragma acc routine 
 int minabsvalloc_d(double* za, int nd){
   int il = 0;
   double zz = fabs(za[0]);
@@ -316,6 +356,7 @@ int minabsvalloc_d(double* za, int nd){
   return il;
 }
 
+#pragma acc routine 
 int maxabsvalloc_d(double* za, int nd){
   int il = 0;
   double zz = 0.0;
@@ -329,6 +370,7 @@ int maxabsvalloc_d(double* za, int nd){
   return il;
 }
 
+#pragma acc routine seq
 double entry_ij(int i, int j){
   int il;
   int n[3];
@@ -353,6 +395,7 @@ double entry_ij(int i, int j){
   return result;
 }
 
+#pragma acc routine
 double face_integral2(double xs[], double ys[], double zs[], double x, double y, double z){
   int il;
   double PI = 3.1415927;
@@ -382,6 +425,7 @@ double face_integral2(double xs[], double ys[], double zs[], double x, double y,
   v[1] = ys[2] - ys[1];
   v[2] = zs[2] - zs[1];
   
+
   cross_product(u, v, w);
   
   double dw = sqrt( dot_product(w,w,3));
@@ -433,12 +477,14 @@ double face_integral2(double xs[], double ys[], double zs[], double x, double y,
 
 }
 
+#pragma acc routine
 void cross_product(double* u, double* v, double* w){
   w[0] = u[1] * v[2] - u[2] * v[1];
   w[1] = u[2] * v[0] - u[0] * v[2];
   w[2] = u[0] * v[1] - u[1] * v[0];
 }
 
+#pragma acc routine 
 void adotsub_dsm(double* zr, double* zaa, double* zab, int it, int ndl, int ndt, int mdl, int mdt){
   int il;
   double* zau = (double*)calloc(ndl,sizeof(double));
@@ -450,6 +496,7 @@ void adotsub_dsm(double* zr, double* zaa, double* zab, int it, int ndl, int ndt,
   free(zau);
 }
 
+#pragma acc routine 
 void adot_dsm(double* zau, double* zaa, double* zab, int im, int ndl, int ndt, int mdl, int mdt){
   int it,il;
   double (*zaa2)[mdl];
@@ -463,13 +510,15 @@ void adot_dsm(double* zau, double* zaa, double* zab, int im, int ndl, int ndt, i
   }
 }
 
+
+#pragma acc routine
 double dot_product(double* v, double* u, int n){
-  double result = 0.0;
+  double result1 = 0.0;
   int i;
   for (i = 0; i < n; i++){
-    result += v[i] * u[i];
+    result1 += v[i] * u[i];
   }
-  return result;
+  return result1;
 }
 
 int max(int a, int b){
@@ -486,6 +535,7 @@ int min(int a, int b){
   return b;
 }
 
+#pragma acc routine 
 double dist_2cluster(int st_cltl,int st_cltt){
   double zs = 0.0;
   int id;
@@ -499,6 +549,7 @@ double dist_2cluster(int st_cltl,int st_cltt){
   return sqrt(zs);
 }
 
+#pragma acc routine 
 int create_cluster(int ndpth,int nstrt,int nsize,int ndim,int nson){
   int st_clt;
   st_clt = countCT;
@@ -512,6 +563,7 @@ int create_cluster(int ndpth,int nstrt,int nsize,int ndim,int nson){
   return st_clt;
 }
 
+#pragma acc routine 
 int create_ctree_ssgeom(int st_clt,   //the current node
 			      double (*zgmid)[3],     //coordination of objects
             int (*face2node)[3],
@@ -577,7 +629,10 @@ int create_ctree_ssgeom(int st_clt,   //the current node
     }
     
     if(nl == nd || nl == 0){
-      fprintf (stdout, "nl = %ld, nr = %ld\n", nl, nr);
+      // #ifndef _OPENACC
+      // fprintf (stdout, "nl = %ld, nr = %ld\n", nl, nr);
+      // #endif
+      // printf (stdout, "nl = %ld, nr = %ld\n", nl, nr);
       nson = 0;
       st_clt = create_cluster(ndpth,nsrt,nd,ndim,nson);
     }else{
@@ -647,4 +702,15 @@ int create_ctree_ssgeom(int st_clt,   //the current node
   resultCTlist[st_clt].zwdth = sqrt(zwdth);
   //end of bounding box
   return st_clt;
+}
+
+// to replace cblas_dnrm2
+#pragma acc routine
+double simple_dnrm2(int n, const double *x, int incx) {
+    double norm = 0.0;
+    #pragma acc loop seq
+    for (int i = 0; i < n; i++) {
+        norm += x[i * incx] * x[i * incx];
+    }
+    return sqrt(norm);
 }

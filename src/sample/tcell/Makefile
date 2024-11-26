@@ -16,8 +16,18 @@ ICC=icc
 # Optimization options for C Compilers
 # OPT=-O3 -msse4.2 -g $(MOPT)
 
-GCC=gcc
-OPT=-std=c11 -O3 -lm -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -g bem_data/filling.c bem_data/bem_file.c -o hmat_ct_reds
+# complier hmat_ct_reds.tcell original
+# GCC=nvc
+# OPT=-std=c11 -O3 -lm -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -g bem_data/filling_w/o_openacc.c bem_data/bem_file.c -o hmat_ct_reds
+
+# complier hmat_ct_reds.tcell with CPU
+# GCC=nvc
+# OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc80 -tp zen3 -Minfo=accel -lm bem_data/filling_wo_openacc.c bem_data/bem_file.c -o hmat_ct_reds
+
+# complier hmat_ct_reds.tcell with GPU
+GCC=nvc
+OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc80 -tp zen3 -Minfo=accel -lm bem_data/filling.c bem_data/bem_file.c -o hmat_ct_reds
+
 
 # Keyword for L-Closures and Closures in XC Cube. Don't modify.
 XCCOPT=-DCT=lightweight

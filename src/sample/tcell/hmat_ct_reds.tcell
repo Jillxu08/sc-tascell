@@ -12,7 +12,7 @@
 ;; (c-exp "#include <pthread.h>")
 (c-exp "#include <unistd.h>")
 (c-exp "#include <stdatomic.h>")
-(c-exp "#include <mkl.h>")
+;; (c-exp "#include <mkl.h>")
 (c-exp "#include \"bem_data/bem_file.h\"")
 (c-exp "#include \"bem_data/filling.h\"")
 
