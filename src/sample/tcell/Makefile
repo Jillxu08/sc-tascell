@@ -23,13 +23,16 @@ MOPT=-acc
 # CFLAGS=-I/usr/include/openblas
 # for mm using nvblas
 # MOPT=-lnvblas -lm -lpthread
-# CFLAGS=-I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/include 
-# LDFLAGS=-L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/lib64 -lcudart 
+CFLAGS=-I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/include 
+LDFLAGS=-L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/lib64 -lcudart 
 
 # OPT=-O3 -lm -std=c99 -mcmodel=medium -march=native $(MOPT) $(CFLAGS) $(LDFLAGS) mm_cu.c
 
 # OPT=-O3 -lm -march=native -Mvect -Minline -Mconcur -std=c99 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
-OPT=-O3 -lm -march=native -std=c99 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
+# OPT=-O3 -lm -march=native -std=c99 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
+
+OPT=-lm -acc -ta=nvidia -O3 -mp -msse4.2 -lcudart -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
+
 # mm_c_th.c
 # OPT+=-mcmodel=medium
 # OPT=-O3 -g $(MOPT) -gpu=cc60,cuda11.0,pinned th.c

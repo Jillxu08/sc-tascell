@@ -10,6 +10,7 @@
 #include <omp.h>
 #include <immintrin.h>
 #include <unistd.h>
+#include <cuda_runtime.h>
 #ifdef _OPENACC
 #include <openacc.h>
 #endif
@@ -27,6 +28,150 @@ double (* restrict material)[N+2];
 double * A [64];
 double * B [64];
 // double * M [64];
+
+
+void tb(int x, int y, int n, int id, int it, int use_gpu)
+{
+    // int blockEnd;
+    int x_s, x_e, y_s, y_e, len_x, len_y;
+    int xx_s, yy_s, xx_e, yy_e;
+    const int nn = n + 2 * BLOCK_LEVEL;
+
+    double (*new_a)[nn];
+    double (*new_b)[nn];
+
+    if (use_gpu) {
+        new_b = (double (*)[nn])malloc(nn * nn * sizeof(double));
+    } else {
+        new_a = A[id];
+        new_b = B[id];
+    }
+
+    xx_s = (x - BLOCK_LEVEL < 0) ? 0 : x - BLOCK_LEVEL;
+    yy_s = (y - BLOCK_LEVEL < 0) ? 0 : y - BLOCK_LEVEL;
+    xx_e = (x + n - 1 + BLOCK_LEVEL > N + 1) ? N + 1 : x + n - 1 + BLOCK_LEVEL;
+    yy_e = (y + n - 1 + BLOCK_LEVEL > N + 1) ? N + 1 : y + n - 1 + BLOCK_LEVEL;
+    len_x = xx_e - xx_s + 1;
+    len_y = yy_e - yy_s + 1;
+
+    const int blockEnd = (it + BLOCK_LEVEL < It) ? it + BLOCK_LEVEL : It;
+
+    x_s = x - BLOCK_LEVEL;
+    y_s = y - BLOCK_LEVEL;
+    x_e = x + n - 1 + BLOCK_LEVEL;
+    y_e = y + n - 1 + BLOCK_LEVEL;
+
+    int nb_xx_s, nb_yy_s, nb_xx_e, nb_yy_e, nb_len_x, nb_len_y;
+
+    cudaEvent_t start, stop;
+    float gpuTransferTime = 0.0f;
+
+    if (use_gpu) { 
+        nb_xx_s = (x - BLOCK_LEVEL < 0) ? BLOCK_LEVEL - 1 : 1;
+        nb_yy_s = (y - BLOCK_LEVEL < 0) ? BLOCK_LEVEL - 1 : 1;
+        nb_xx_e = (x + n - 1 + BLOCK_LEVEL > N + 1) ? n + BLOCK_LEVEL : n - 1 + 2 * BLOCK_LEVEL;
+        nb_yy_e = (y + n - 1 + BLOCK_LEVEL > N + 1) ? n + BLOCK_LEVEL : n - 1 + 2 * BLOCK_LEVEL;
+        nb_len_x = nb_xx_e - nb_xx_s + 1;
+        nb_len_y = nb_yy_e - nb_yy_s + 1;
+    
+        // Measure GPU data transfer time
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+        cudaEventRecord(start, 0);  // Start timing
+
+        #pragma acc data copyin(a[xx_s:len_x][yy_s:len_y]) create(new_b[nb_xx_s:nb_len_x][nb_yy_s:nb_len_y]) copyout(b[x:n][y:n])
+        {   
+
+            cudaEventRecord(stop, 0);  // Stop timing
+            cudaEventSynchronize(stop);
+            cudaEventElapsedTime(&gpuTransferTime, start, stop);
+            
+            printf("GPU Data Transfer Time: %.3f ms\n", gpuTransferTime);
+            for (int iter = it; iter < blockEnd - 1; iter++) {
+                int j_x_s = (x_s < 1) ? 1 : x_s + 1;
+                int j_x_e = (x_e > N) ? N + 1 : x_e;
+                int i_y_s = (y_s < 1) ? 1 : y_s + 1;
+                int i_y_e = (y_e > N) ? N + 1 : y_e;
+
+                #pragma acc kernels present(a[xx_s:len_x][yy_s:len_y], new_b[nb_xx_s:nb_len_x][nb_yy_s:nb_len_y])
+                for (int j = j_x_s; j < j_x_e; j++) {
+                    for (int i = i_y_s; i < i_y_e; i++) {
+                        new_b[j - j_x_s + nb_xx_s][i - i_y_s + nb_yy_s] = delT * (a[j + 1][i] + a[j - 1][i] + a[j][i + 1] + a[j][i - 1] + a[j][i]);
+                    }
+                }
+
+                #pragma acc kernels present(a[xx_s:len_x][yy_s:len_y], new_b[nb_xx_s:nb_len_x][nb_yy_s:nb_len_y])
+                for (int j = j_x_s; j < j_x_e; j++) {
+                    for (int i = i_y_s; i < i_y_e; i++) {
+                        a[j][i] = new_b[j - j_x_s + nb_xx_s][i - i_y_s + nb_yy_s];
+                    }
+                }
+                x_s++;
+                y_s++;
+                x_e--;
+                y_e--;
+            }
+
+            #pragma acc kernels present(a[xx_s:len_x][yy_s:len_y], b[x:n][y:n]) 
+            for (int j = x; j < (x + n); j++) {
+                for (int i = y; i < (y + n); i++) {
+                    b[j][i] = delT * (a[j + 1][i] + a[j - 1][i] + a[j][i + 1] + a[j][i - 1] + a[j][i]);
+                }
+            }
+        }
+         // 清理
+        cudaEventDestroy(start);
+        cudaEventDestroy(stop);
+        // free(new_b);
+    } else {
+        nb_xx_s= (x_s < 0) ? BLOCK_LEVEL-1 : 0; 
+        nb_yy_s= (y_s < 0) ? BLOCK_LEVEL-1 : 0;
+        nb_xx_e = (x_e > N + 1) ? th_cpu+BLOCK_LEVEL : th_cpu-1+2*BLOCK_LEVEL;
+        nb_yy_e = (y_e > N + 1) ? th_cpu+BLOCK_LEVEL : th_cpu-1+2*BLOCK_LEVEL;
+
+        int len_y_yy_s = yy_e + 1 - yy_s;
+
+        #pragma omp simd
+        for (int j = xx_s; j < xx_e + 1; j++) {
+            memcpy(&new_a[j - xx_s + nb_xx_s][nb_yy_s], &a[j][yy_s], len_y_yy_s * sizeof(double));
+            memcpy(&new_b[j - xx_s + nb_xx_s][nb_yy_s], &b[j][yy_s], len_y_yy_s * sizeof(double));
+        }
+
+        for (int iter = it; iter < blockEnd - 1; iter++) {
+            int j_x_s = (x_s < 1) ? BLOCK_LEVEL : nb_xx_s + 1;
+            int j_x_e = (x_e > N + 1) ? th_cpu + BLOCK_LEVEL : nb_xx_e;
+            int i_y_s = (y_s < 1) ? BLOCK_LEVEL : nb_yy_s + 1;
+            int i_y_e = (y_e > N + 1) ? th_cpu + BLOCK_LEVEL : nb_yy_e;
+
+            for (int j = j_x_s; j < j_x_e; j++) {
+                #pragma omp simd
+                for (int i = i_y_s; i < i_y_e; i++) {
+                    new_b[j][i] = delT * (new_a[j + 1][i] + new_a[j - 1][i] + new_a[j][i + 1] + new_a[j][i - 1] + new_a[j][i]);
+                }
+            }
+
+            double (*tmp)[nn];
+            tmp = new_a;
+            new_a = new_b;
+            new_b = tmp;
+
+            nb_xx_s++;
+            nb_yy_s++;
+            nb_xx_e--;
+            nb_yy_e--;
+        }
+
+        int tx = x - BLOCK_LEVEL;
+        int ty = y - BLOCK_LEVEL;
+
+        for (int j = x; j < (x + n); j++) {
+            #pragma omp simd
+            for (int i = y; i < (y + n); i++) {
+                b[j][i] = delT * (new_a[j - tx + 1][i - ty] + new_a[j - tx - 1][i - ty] + new_a[j - tx][i - ty + 1] + new_a[j - tx][i - ty - 1] + new_a[j - tx][i - ty]);
+            }
+        }
+    }
+}
 
 void init_gpu(int n)
 {   
@@ -65,45 +210,13 @@ void cpu(int x, int y, int n, int id, int it)
     for(int j=x; j < (x+n); j++){
         for(int i=y; i < (y+n); i++){
             b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);  
-            // if(a[j][i] > MAX_TEMP)
-            //     {
-            //         // fprintf(stderr,"----------  ------------\n");
-            //         b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i] + a[j-1][i-1] + a[j-1][i+1] + a[j+1][i-1] + a[j+1][i+1]);
-            //     }
-            //     else{
-            //         b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);  
-            //     }
-            // b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] 
-            // + a[j-1][i-1] + a[j-1][i+1] + a[j+1][i-1] + a[j+1][i+1] + a[j][i]);
-    }}
+     }}
 }
 
 void seq_cpu(int j, int i, int it)
 {     
-    // double conductivity;
-    // // 根据材料类型选择热传导系数
-    // if (material[j][i] == 0) {
-    // conductivity = CONDUCTIVITY_0;
-    // } else if (material[j][i] == 1) {
-    // conductivity = CONDUCTIVITY_1;
-    // } else if (material[j][i] == 2) {
-    // conductivity = CONDUCTIVITY_2;
-    // } else {
-    // // 默认传导系数（错误情况）
-    // conductivity = 0.0;
-    // }
+
     d[j][i] = delT*(c[j+1][i] + c[j-1][i] + c[j][i+1] + c[j][i-1] + c[j][i]);  
-    // d[j][i] = c[j][i] - 0.1 * (c[j][i] - delT*(c[j+1][i] + c[j-1][i] + c[j][i+1] + c[j][i-1] + c[j][i]));
-    // if(c[j][i] > MAX_TEMP)
-    //     {
-    // //         // fprintf(stderr,"---------- seq_cpu ------------\n");
-    // //         // d[j][i] = delT1*(c[j+1][i] + c[j-1][i] + c[j][i+1] + c[j][i-1] + c[j][i]+ c[j-1][i-1] + c[j-1][i+1] + c[j+1][i-1] + c[j+1][i+1]);
-    //         d[j][i] = c[j][i] - 0.1 * (c[j][i] - delT*(c[j+1][i] + c[j-1][i] + c[j][i+1] + c[j][i-1] + c[j][i]));
-    //     }
-    //     else if{
-    //         d[j][i] = delT*(c[j+1][i] + c[j-1][i] + c[j][i+1] + c[j][i-1] + c[j][i]);  
-    //     }
-        // fprintf(stderr,"seq_cpu: new_b[%d][%d]=%f(%p), c[%d][%d]=%f(%p), c[%d][%d]=%f, c[%d][%d]=%f, c[%d][%d]=%f, c[%d][%d]=%f\n", j, i, d[j][i], &d[j][i], j+1, i, c[j+1][i], &c[j+1][i], j-1, i, c[j-1][i], j, i+1, c[j][i+1], j, i-1, c[j][i-1], j, i, c[j][i]);
 }
 
 void gpu(int x, int y, int n, int id, int it)
@@ -314,25 +427,12 @@ void scpu_tb(int x, int y, int n, int id, int it)
     n_xx_e = (x_e > N + 1) ? th_cpu+BLOCK_LEVEL : th_cpu-1+2*BLOCK_LEVEL;
     n_yy_e = (y_e > N + 1) ? th_cpu+BLOCK_LEVEL : th_cpu-1+2*BLOCK_LEVEL;
 
-    // for(int j=xx_s; j < xx_e+1; j++) {
-    //     #pragma omp simd
-    //     for(int i=yy_s ; i < yy_e+1; i++) {
-    //         new_a[j-xx_s+n_xx_s][i-yy_s+n_yy_s] = a[j][i]; 
-    //         new_b[j-xx_s+n_xx_s][i-yy_s+n_yy_s] = b[j][i];
-    //         // fprintf(stderr,"new_a[%d][%d]=%f(%p)\n", j-xx_s+n_xx_s, i-yy_s+n_yy_s, new_a[j-xx_s+n_xx_s][i-yy_s+n_yy_s],&new_a[j-xx_s+n_xx_s][i-yy_s+n_yy_s]);
-    //     }}
-
-    // fprintf(stderr,"x=%d, y=%d:\n xx_s=%d, yy_s=%d,  xx_e=%d, yy_e=%d, n=%d\n", 
-    //                 x, y, xx_s, yy_s,  xx_e, yy_e, n);
     #pragma omp simd
     for(int j=xx_s; j < xx_e+1; j++) {
         memcpy(&new_a[j-xx_s+n_xx_s][n_yy_s], &a[j][yy_s], (yy_e+1-yy_s) * sizeof(double));
         memcpy(&new_b[j-xx_s+n_xx_s][n_yy_s], &b[j][yy_s], (yy_e+1-yy_s) * sizeof(double));
         // memcpy(&new_m[j-xx_s+n_xx_s][n_yy_s], &material[j][yy_s], (yy_e+1-yy_s) * sizeof(double));
     }
-    // fprintf(stderr,"new_a[%d][%d]=%f\n");
-    // fprintf(stderr,"x=%d, y=%d:\n xx_s=%d, yy_s=%d,  xx_e=%d, yy_e=%d, n=%d\n", 
-                // x, y, xx_s, yy_s,  xx_e, yy_e, n);
     for(int iter = it; iter < blockEnd-1; iter++) {  
         int j_x_s = (x_s < 1) ? BLOCK_LEVEL : n_xx_s+1;
         int j_x_e = (x_e > N ) ? th_cpu+BLOCK_LEVEL : n_xx_e;
@@ -344,33 +444,7 @@ void scpu_tb(int x, int y, int n, int id, int it)
         for(int j=j_x_s; j < j_x_e; j++) {
             #pragma omp simd
             for(int i=i_y_s; i < i_y_e; i++) {
-                // double conductivity;          
-                // if (new_m[j][i] == 0) {
-                // conductivity = CONDUCTIVITY_0;
-                // } else if (new_m[j][i] == 1) {
-                // conductivity = CONDUCTIVITY_1;
-                // } else if (new_m[j][i] == 2) {
-                // conductivity = CONDUCTIVITY_2;
-                // } else {
-                // // 默认传导系数（错误情况）
-                // conductivity = 0.0;
-                // }
-                // fprintf(stderr,"material[%d][%d]=%f\n", j+xx_s-n_xx_s, i+yy_s-n_yy_s, material[j+xx_s-n_xx_s][i+yy_s-n_yy_s]);
                 new_b[j][i] =  delT * (new_a[j+1][i] + new_a[j-1][i] + new_a[j][i+1] + new_a[j][i-1] + new_a[j][i]);
-                // fprintf(stderr,"material[%d][%d]=%f, new_b[%d][%d]=%f\n", j+xx_s-n_xx_s, i+yy_s-n_yy_s, material[j+xx_s-n_xx_s][i+yy_s-n_yy_s], j, i, new_b[j][i]);
-                // new_b[j][i] = new_a[j][i] - 0.1 * (new_a[j][i] - delT * (new_a[j+1][i] + new_a[j-1][i] + new_a[j][i+1] + new_a[j][i-1] + new_a[j][i]));
-                // if(new_a[j][i] > MAX_TEMP){
-                // //     // fprintf(stderr,"---------- scpu_tb ------------\n");
-                // //     // new_b[j][i] = delT1 * (new_a[j+1][i] + new_a[j-1][i] + new_a[j][i+1] + new_a[j][i-1] + new_a[j][i] + new_a[j-1][i-1] + new_a[j-1][i+1] + new_a[j+1][i-1] + new_a[j+1][i+1]);
-                //     new_b[j][i] = new_a[j][i] - 0.1 * (new_a[j][i] - delT * (new_a[j+1][i] + new_a[j-1][i] + new_a[j][i+1] + new_a[j][i-1] + new_a[j][i]));
-                // //     // fprintf(stderr,"if: new_b[j][i]=%f, new_a[j+1][i]=%f, new_a[j-1][i]=%f, new_a[j][i+1]=%f, new_a[j][i-1]=%f, new_a[j][i]=%f\n", new_b[j][i], new_a[j+1][i], new_a[j-1][i], new_a[j][i+1], new_a[j][i-1], new_a[j][i]);
-                // }
-                // else
-                // {
-                //     new_b[j][i] = delT * (new_a[j+1][i] + new_a[j-1][i] + new_a[j][i+1] + new_a[j][i-1] + new_a[j][i]);
-                // //     // fprintf(stderr,"else: new_b[%d][%d]=%f(%p), new_a[%d][%d]=%f(%p), new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f\n", j, i, new_b[j][i], &new_b[j][i], j+1, i, new_a[j+1][i], &new_a[j+1][i], j-1, i, new_a[j-1][i], j, i+1,  new_a[j][i+1], j, i-1, new_a[j][i-1], j, i, new_a[j][i]);
-                // //             // + new_a[j-1][i-1] + new_a[j-1][i+1] + new_a[j+1][i-1] + new_a[j+1][i+1] + new_a[j][i]);
-                // }
         }}
         double (* tmp)[nn];
         tmp=new_a;
@@ -387,40 +461,13 @@ void scpu_tb(int x, int y, int n, int id, int it)
         n_yy_e--;
     }
 
-    // #pragma omp parallel for collapse(2) simd
     int tx = x-BLOCK_LEVEL;
     int ty = y-BLOCK_LEVEL;
 
     for(int j=x; j < (x+n); j++){
         #pragma omp simd
         for(int i=y; i < (y+n); i++){
-            // double conductivity;
-            // // 根据材料类型选择热传导系数
-            // if (material[j][i] == 0) {
-            // conductivity = CONDUCTIVITY_0;
-            // } else if (material[j][i] == 1) {
-            // conductivity = CONDUCTIVITY_1;
-            // } else if (material[j][i] == 2) {
-            // conductivity = CONDUCTIVITY_2;
-            // } else {
-            // // 默认传导系数（错误情况）
-            // conductivity = 0.0;
-            // }
             b[j][i] =  delT * (new_a[j-tx+1][i-ty] + new_a[j-tx-1][i-ty] + new_a[j-tx][i-ty+1] + new_a[j-tx][i-ty-1] + new_a[j-tx][i-ty]);
-            // b[j][i] = new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL] - 0.1 * (new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL] -  delT * (new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL]));
-            // if(new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL] > MAX_TEMP)
-            // {
-            // //     // fprintf(stderr,"---------- last scpu_tb ------------\n");
-            // //     // b[j][i] = delT1 * (new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL]
-            // //     //    + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL+1]);
-            //     b[j][i] = new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL] - 0.1 * (new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL] -  delT * (new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL]));
-            // }
-            // else
-            // {
-            //     b[j][i] = delT * (new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL]);
-            // //        // + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL-1][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL-1] + new_a[j-x+BLOCK_LEVEL+1][i-y+BLOCK_LEVEL+1] + new_a[j-x+BLOCK_LEVEL][i-y+BLOCK_LEVEL]);
-            // //     // fprintf(stderr,"b[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f, new_a[%d][%d]=%f\n", j, i, b[j][i], j+1, i, new_a[j+1][i], j-1, i, new_a[j-1][i], j, i+1,  new_a[j][i+1], j, i-1, new_a[j][i-1], j, i, new_a[j][i]);            
-            // }
         }}
     // free(new_a);
     // free(new_b);

@@ -1,4 +1,4 @@
-#define N 8192
+#define N 16
 // // 131072L, 65536L, 32768, 16384, 8192, 4096, 2048
 // #define th_gpu1 4096 // th_gpu > BLOCK_LEVEL
 // #define th_gpu2 1024
@@ -34,6 +34,7 @@ void scpu_tb(int x, int y, int n, int id, int it);
 void cpu_tb(int x, int y, int n, int it);
 void cpu(int x, int y, int n, int id, int it);
 void seq_cpu(int j, int i, int it);
+void tb(int x, int y, int n, int id, int it, int use_gpu);
 
 
 // ------ size ----------
