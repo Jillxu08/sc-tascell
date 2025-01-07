@@ -29,180 +29,26 @@ double * A [64];
 double * B [64];
 // double * M [64];
 
-
-void tb(int x, int y, int n, int id, int it, int use_gpu)
-{
-    // int blockEnd;
-    int x_s, x_e, y_s, y_e, len_x, len_y;
-    int xx_s, yy_s, xx_e, yy_e;
-    const int nn = n + 2 * BLOCK_LEVEL;
-
-    double (*new_a)[nn];
-    double (*new_b)[nn];
-
-    if (use_gpu) {
-        new_b = (double (*)[nn])malloc(nn * nn * sizeof(double));
-    } else {
-        new_a = A[id];
-        new_b = B[id];
-    }
-
-    xx_s = (x - BLOCK_LEVEL < 0) ? 0 : x - BLOCK_LEVEL;
-    yy_s = (y - BLOCK_LEVEL < 0) ? 0 : y - BLOCK_LEVEL;
-    xx_e = (x + n - 1 + BLOCK_LEVEL > N + 1) ? N + 1 : x + n - 1 + BLOCK_LEVEL;
-    yy_e = (y + n - 1 + BLOCK_LEVEL > N + 1) ? N + 1 : y + n - 1 + BLOCK_LEVEL;
-    len_x = xx_e - xx_s + 1;
-    len_y = yy_e - yy_s + 1;
-
-    const int blockEnd = (it + BLOCK_LEVEL < It) ? it + BLOCK_LEVEL : It;
-
-    x_s = x - BLOCK_LEVEL;
-    y_s = y - BLOCK_LEVEL;
-    x_e = x + n - 1 + BLOCK_LEVEL;
-    y_e = y + n - 1 + BLOCK_LEVEL;
-
-    int nb_xx_s, nb_yy_s, nb_xx_e, nb_yy_e, nb_len_x, nb_len_y;
-
-    cudaEvent_t start, stop;
-    float gpuTransferTime = 0.0f;
-
-    if (use_gpu) { 
-        nb_xx_s = (x - BLOCK_LEVEL < 0) ? BLOCK_LEVEL - 1 : 1;
-        nb_yy_s = (y - BLOCK_LEVEL < 0) ? BLOCK_LEVEL - 1 : 1;
-        nb_xx_e = (x + n - 1 + BLOCK_LEVEL > N + 1) ? n + BLOCK_LEVEL : n - 1 + 2 * BLOCK_LEVEL;
-        nb_yy_e = (y + n - 1 + BLOCK_LEVEL > N + 1) ? n + BLOCK_LEVEL : n - 1 + 2 * BLOCK_LEVEL;
-        nb_len_x = nb_xx_e - nb_xx_s + 1;
-        nb_len_y = nb_yy_e - nb_yy_s + 1;
-    
-        // Measure GPU data transfer time
-        cudaEventCreate(&start);
-        cudaEventCreate(&stop);
-        cudaEventRecord(start, 0);  // Start timing
-
-        #pragma acc data copyin(a[xx_s:len_x][yy_s:len_y]) create(new_b[nb_xx_s:nb_len_x][nb_yy_s:nb_len_y]) copyout(b[x:n][y:n])
-        {   
-
-            cudaEventRecord(stop, 0);  // Stop timing
-            cudaEventSynchronize(stop);
-            cudaEventElapsedTime(&gpuTransferTime, start, stop);
-            
-            printf("GPU Data Transfer Time: %.3f ms\n", gpuTransferTime);
-            for (int iter = it; iter < blockEnd - 1; iter++) {
-                int j_x_s = (x_s < 1) ? 1 : x_s + 1;
-                int j_x_e = (x_e > N) ? N + 1 : x_e;
-                int i_y_s = (y_s < 1) ? 1 : y_s + 1;
-                int i_y_e = (y_e > N) ? N + 1 : y_e;
-
-                #pragma acc kernels present(a[xx_s:len_x][yy_s:len_y], new_b[nb_xx_s:nb_len_x][nb_yy_s:nb_len_y])
-                for (int j = j_x_s; j < j_x_e; j++) {
-                    for (int i = i_y_s; i < i_y_e; i++) {
-                        new_b[j - j_x_s + nb_xx_s][i - i_y_s + nb_yy_s] = delT * (a[j + 1][i] + a[j - 1][i] + a[j][i + 1] + a[j][i - 1] + a[j][i]);
-                    }
-                }
-
-                #pragma acc kernels present(a[xx_s:len_x][yy_s:len_y], new_b[nb_xx_s:nb_len_x][nb_yy_s:nb_len_y])
-                for (int j = j_x_s; j < j_x_e; j++) {
-                    for (int i = i_y_s; i < i_y_e; i++) {
-                        a[j][i] = new_b[j - j_x_s + nb_xx_s][i - i_y_s + nb_yy_s];
-                    }
-                }
-                x_s++;
-                y_s++;
-                x_e--;
-                y_e--;
-            }
-
-            #pragma acc kernels present(a[xx_s:len_x][yy_s:len_y], b[x:n][y:n]) 
-            for (int j = x; j < (x + n); j++) {
-                for (int i = y; i < (y + n); i++) {
-                    b[j][i] = delT * (a[j + 1][i] + a[j - 1][i] + a[j][i + 1] + a[j][i - 1] + a[j][i]);
-                }
-            }
-        }
-         // 清理
-        cudaEventDestroy(start);
-        cudaEventDestroy(stop);
-        // free(new_b);
-    } else {
-        nb_xx_s= (x_s < 0) ? BLOCK_LEVEL-1 : 0; 
-        nb_yy_s= (y_s < 0) ? BLOCK_LEVEL-1 : 0;
-        nb_xx_e = (x_e > N + 1) ? th_cpu+BLOCK_LEVEL : th_cpu-1+2*BLOCK_LEVEL;
-        nb_yy_e = (y_e > N + 1) ? th_cpu+BLOCK_LEVEL : th_cpu-1+2*BLOCK_LEVEL;
-
-        int len_y_yy_s = yy_e + 1 - yy_s;
-
-        #pragma omp simd
-        for (int j = xx_s; j < xx_e + 1; j++) {
-            memcpy(&new_a[j - xx_s + nb_xx_s][nb_yy_s], &a[j][yy_s], len_y_yy_s * sizeof(double));
-            memcpy(&new_b[j - xx_s + nb_xx_s][nb_yy_s], &b[j][yy_s], len_y_yy_s * sizeof(double));
-        }
-
-        for (int iter = it; iter < blockEnd - 1; iter++) {
-            int j_x_s = (x_s < 1) ? BLOCK_LEVEL : nb_xx_s + 1;
-            int j_x_e = (x_e > N + 1) ? th_cpu + BLOCK_LEVEL : nb_xx_e;
-            int i_y_s = (y_s < 1) ? BLOCK_LEVEL : nb_yy_s + 1;
-            int i_y_e = (y_e > N + 1) ? th_cpu + BLOCK_LEVEL : nb_yy_e;
-
-            for (int j = j_x_s; j < j_x_e; j++) {
-                #pragma omp simd
-                for (int i = i_y_s; i < i_y_e; i++) {
-                    new_b[j][i] = delT * (new_a[j + 1][i] + new_a[j - 1][i] + new_a[j][i + 1] + new_a[j][i - 1] + new_a[j][i]);
-                }
-            }
-
-            double (*tmp)[nn];
-            tmp = new_a;
-            new_a = new_b;
-            new_b = tmp;
-
-            nb_xx_s++;
-            nb_yy_s++;
-            nb_xx_e--;
-            nb_yy_e--;
-        }
-
-        int tx = x - BLOCK_LEVEL;
-        int ty = y - BLOCK_LEVEL;
-
-        for (int j = x; j < (x + n); j++) {
-            #pragma omp simd
-            for (int i = y; i < (y + n); i++) {
-                b[j][i] = delT * (new_a[j - tx + 1][i - ty] + new_a[j - tx - 1][i - ty] + new_a[j - tx][i - ty + 1] + new_a[j - tx][i - ty - 1] + new_a[j - tx][i - ty]);
-            }
-        }
-    }
-}
-
 void init_gpu(int n)
 {   
     char *name;
     name = (char *)malloc(20 * sizeof(int));
     int len;
     gethostname(name, &len);
-    printf("my processor is %s\n",name);
+    // printf("my processor is %s\n",name);
     
     for(int k=0; k < 64 ; k++){
         A[k] = (double (*))malloc((th_cpu+2*BLOCK_LEVEL) * (th_cpu+2*BLOCK_LEVEL) * sizeof(double));
         B[k] = (double (*))malloc((th_cpu+2*BLOCK_LEVEL) * (th_cpu+2*BLOCK_LEVEL) * sizeof(double));
         // M[k] = (double (*))malloc((th_cpu+2*BLOCK_LEVEL) * (th_cpu+2*BLOCK_LEVEL) * sizeof(double));
     }
-    #pragma acc data copyin(a[0:n+2][0:n+2], b[0:n+2][0:n+2])
-    {
-        #pragma acc parallel loop collapse(2)
-        for(int j=1; j < (1+n); j++){
-            for(int i=1; i < (1+n); i++){
-                b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
-                // if(a[j][i] > MAX_TEMP){
-                //     b[j][i] = a[j][i] - 0.1 * (a[j][i] - delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]));
-                // }
-                // else
-                // {
-                //     b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
-                // }
-                // b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
-                // b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] 
-                // + a[j-1][i-1] + a[j-1][i+1] + a[j+1][i-1] + a[j+1][i+1] + a[j][i]);
-    }}}
+    // #pragma acc data copyin(a[0:n+2][0:n+2], b[0:n+2][0:n+2])
+    // {
+    //     #pragma acc parallel loop collapse(2)
+    //     for(int j=1; j < (1+n); j++){
+    //         for(int i=1; i < (1+n); i++){
+    //             b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
+    // }}}
 }
 
 void cpu(int x, int y, int n, int id, int it)
@@ -295,9 +141,25 @@ void sgpu_tb(int x, int y, int n, int id, int it)
     // acc_set_device_num(gpu_id, acc_device_nvidia);
     // fprintf(stderr,"x=%d, y=%d:\n xx_s=%d, yy_s=%d,  xx_e=%d, yy_e=%d, len_x=%d, len_y=%d;\n nb_xx_s=%d, nb_yy_s=%d,  nb_xx_e=%d, nb_yy_e=%d, nb_len_x=%d, nb_len_y=%d\n", 
     //                 x, y, xx_s, yy_s,  xx_e, yy_e, len_x, len_y, nb_xx_s, nb_yy_s,  nb_xx_e, nb_yy_e, nb_len_x, nb_len_y);
+    
+    // cudaEvent_t start, stop;
+    // float gpuTransferTime = 0.0f;
+    // // Measure GPU data transfer time
+    // cudaEventCreate(&start);
+    // cudaEventCreate(&stop);
+    // cudaEventRecord(start, 0);  // Start timing
+    // double start, end;
+    // start = get_time();
     #pragma acc data copyin(x, y, n, nb_xx_s, nb_yy_s, nb_xx_e, nb_yy_e, nb_len_x, nb_len_y, xx_s, yy_s, xx_e, yy_e,len_x, len_y, a[xx_s:len_x][yy_s:len_y]) create(new_b[nb_xx_s:nb_len_x][nb_yy_s:nb_len_y]) copyout(b[x:n][y:n])
     {
-        // fprintf(stderr,"---------- 3 ------------\n");
+        // end = get_time();
+        // printf("Data transfer time: %f seconds, worker_id=%d, it=%d, n=%d, x=%d, y=%d\n", end - start, id, it, n, x, y);
+        // // fprintf(stderr,"---------- 3 ------------\n");
+        // cudaEventRecord(stop, 0);  // Stop timing
+        // cudaEventSynchronize(stop);
+        // cudaEventElapsedTime(&gpuTransferTime, start, stop);
+            
+        // printf("GPU Data Transfer Time: %.3f ms\n", gpuTransferTime);
         for (int iter = it; iter < blockEnd-1; iter++) {
             int j_x_s = (x_s < 1) ? 1 : x_s+1;
             int j_x_e = (x_e > N ) ? N+1 : x_e;
@@ -311,37 +173,7 @@ void sgpu_tb(int x, int y, int n, int id, int it)
             for(int j=j_x_s; j < j_x_e; j++) {
                 // #pragma acc loop gang(16), worker(32)
                 for(int i=i_y_s ; i < i_y_e; i++) {
-                    // double conductivity;
-                    // // double conductivity = 0.1;
-                    // // // 根据材料类型选择热传导系数
-                    // if (material[j][i] == 0) {
-                    //     conductivity = CONDUCTIVITY_0;
-                    // } 
-                    // else if (material[j][i] == 1) {
-                    //     conductivity = CONDUCTIVITY_1;
-                    // } 
-                    // else if (material[j][i] == 2) {
-                    //     conductivity = CONDUCTIVITY_2;
-                    // } 
-                    // else {
-                    // // 默认传导系数（错误情况）
-                    //     conductivity = 0.0;
-                    // }
-                    // printf('1\n');
-                    new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s] = delT * (a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
-                    // new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s] = a[j][i] - 0.1 * (a[j][i] - delT * (a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]));
-                    // if(a[j][i] > MAX_TEMP){
-                    // //     // printf("---------- sgpu_tb ------------\n");
-                    // //     // Apply different update rule if temperature exceeds threshold
-                    // //     // new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s] =  delT1 * (a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i] + a[j-1][i-1] + a[j-1][i+1] + a[j+1][i-1] + a[j+1][i+1]);
-                    //     new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s] = a[j][i] - 0.1 * (a[j][i] - delT * (a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]));
-                    //     // new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s] = 25.0;
-                    // }
-                    // else{
-                    // //     // 5 points stencil computation
-                    //     new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s] = delT * (a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
-                    // }
-                    // printf("else: %f(%p)=new_b[%d][%d], a[%d][%d]=%f(%p), a[%d][%d]=%f, a[%d][%d]=%f, a[%d][%d]=%f, a[%d][%d]=%f\n", new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s], &new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s], j-j_x_s+nb_xx_s, i-i_y_s+nb_yy_s, j+1, i, a[j+1][i], &a[j+1][i], j-1, i, a[j-1][i], j, i+1, a[j][i+1], j, i-1, a[j][i-1], j, i, a[j][i]);
+                    new_b[j-j_x_s+nb_xx_s][i-i_y_s+nb_yy_s] = delT * (a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);                
                 }
             }
 
@@ -363,32 +195,12 @@ void sgpu_tb(int x, int y, int n, int id, int it)
         #pragma acc kernels present(xx_s, yy_s, len_x, len_y, a[xx_s:len_x][yy_s:len_y], b[x:n][y:n]) 
         for(int j=x; j < (x+n); j++){
             for(int i=y; i < (y+n); i++){
-                // double conductivity;
-                // // 根据材料类型选择热传导系数
-                // if (material[j][i] == 0) {
-                // conductivity = CONDUCTIVITY_0;
-                // } else if (material[j][i] == 1) {
-                // conductivity = CONDUCTIVITY_1;
-                // } else if (material[j][i] == 2) {
-                // conductivity = CONDUCTIVITY_2;
-                // } else {
-                // // 默认传导系数（错误情况）
-                // conductivity = 0.0;
-                // }
                 b[j][i] =  delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
-                // b[j][i] = a[j][i] - 0.1 * (a[j][i] - delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]));
-                // if(a[j][i] > MAX_TEMP){
-                // //     // printf("----------last sgpu_tb ------------\n");
-                // //     // b[j][i] = delT1 * (a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i] + a[j-1][i-1] + a[j-1][i+1] + a[j+1][i-1] + a[j+1][i+1]);
-                //     b[j][i] = a[j][i] - 0.1 * (a[j][i] - delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]));
-                // }
-                // else{
-                //     b[j][i] = delT*(a[j+1][i] + a[j-1][i] + a[j][i+1] + a[j][i-1] + a[j][i]);
-                // //         // + a[j-1][i-1] + a[j-1][i+1] + a[j+1][i-1] + a[j+1][i+1] );
-                // }
-                // printf("else: b[%d][%d]=%f(%p), a[%d][%d]=%f(%p), a[%d][%d]=%f, a[%d][%d]=%f, a[%d][%d]=%f, a[%d][%d]=%f\n", j, i, b[j][i], &b[j][i], j+1, i, a[j+1][i], &a[j+1][i], j-1, i, a[j-1][i], j, i+1, a[j][i+1], j, i-1, a[j][i-1], j, i, a[j][i]);
-            }}      
+                           }}      
     }
+             // 清理
+    // cudaEventDestroy(start);
+    // cudaEventDestroy(stop);
     // free(new_b);
 }
 void scpu_tb(int x, int y, int n, int id, int it)
@@ -581,13 +393,13 @@ void cpu_tb(int x, int y, int n, int it)
 //     }
 // }
 
-// double get_time(){
-//   struct timeval time;
-//   if (gettimeofday(&time,NULL)){
-//     return 0;
-//   }
-//   return (double)time.tv_sec + (double)time.tv_usec * .000001;
-// }
+double get_time(){
+  struct timeval time;
+  if (gettimeofday(&time,NULL)){
+    return 0;
+  }
+  return (double)time.tv_sec + (double)time.tv_usec * .000001;
+}
 
 
 
@@ -776,3 +588,146 @@ void cpu_tb(int x, int y, int n, int it)
 //         //     }}        
 //     }
 // }
+
+void tb(int x, int y, int n, int id, int it, int use_gpu)
+{
+    // int blockEnd;
+    int x_s, x_e, y_s, y_e, len_x, len_y;
+    int xx_s, yy_s, xx_e, yy_e;
+    const int nn = n + 2 * BLOCK_LEVEL;
+
+    double (*new_a)[nn];
+    double (*new_b)[nn];
+
+    if (use_gpu) {
+        new_b = (double (*)[nn])malloc(nn * nn * sizeof(double));
+    } else {
+        new_a = A[id];
+        new_b = B[id];
+    }
+
+    xx_s = (x - BLOCK_LEVEL < 0) ? 0 : x - BLOCK_LEVEL;
+    yy_s = (y - BLOCK_LEVEL < 0) ? 0 : y - BLOCK_LEVEL;
+    xx_e = (x + n - 1 + BLOCK_LEVEL > N + 1) ? N + 1 : x + n - 1 + BLOCK_LEVEL;
+    yy_e = (y + n - 1 + BLOCK_LEVEL > N + 1) ? N + 1 : y + n - 1 + BLOCK_LEVEL;
+    len_x = xx_e - xx_s + 1;
+    len_y = yy_e - yy_s + 1;
+
+    const int blockEnd = (it + BLOCK_LEVEL < It) ? it + BLOCK_LEVEL : It;
+
+    x_s = x - BLOCK_LEVEL;
+    y_s = y - BLOCK_LEVEL;
+    x_e = x + n - 1 + BLOCK_LEVEL;
+    y_e = y + n - 1 + BLOCK_LEVEL;
+
+    int nb_xx_s, nb_yy_s, nb_xx_e, nb_yy_e, nb_len_x, nb_len_y;
+
+    cudaEvent_t start, stop;
+    float gpuTransferTime = 0.0f;
+
+    if (use_gpu) { 
+        nb_xx_s = (x - BLOCK_LEVEL < 0) ? BLOCK_LEVEL - 1 : 1;
+        nb_yy_s = (y - BLOCK_LEVEL < 0) ? BLOCK_LEVEL - 1 : 1;
+        nb_xx_e = (x + n - 1 + BLOCK_LEVEL > N + 1) ? n + BLOCK_LEVEL : n - 1 + 2 * BLOCK_LEVEL;
+        nb_yy_e = (y + n - 1 + BLOCK_LEVEL > N + 1) ? n + BLOCK_LEVEL : n - 1 + 2 * BLOCK_LEVEL;
+        nb_len_x = nb_xx_e - nb_xx_s + 1;
+        nb_len_y = nb_yy_e - nb_yy_s + 1;
+    
+        // Measure GPU data transfer time
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+        cudaEventRecord(start, 0);  // Start timing
+
+        #pragma acc data copyin(a[xx_s:len_x][yy_s:len_y]) create(new_b[nb_xx_s:nb_len_x][nb_yy_s:nb_len_y]) copyout(b[x:n][y:n])
+        {   
+
+            cudaEventRecord(stop, 0);  // Stop timing
+            cudaEventSynchronize(stop);
+            cudaEventElapsedTime(&gpuTransferTime, start, stop);
+            
+            printf("GPU Data Transfer Time: %.3f ms\n", gpuTransferTime);
+            for (int iter = it; iter < blockEnd - 1; iter++) {
+                int j_x_s = (x_s < 1) ? 1 : x_s + 1;
+                int j_x_e = (x_e > N) ? N + 1 : x_e;
+                int i_y_s = (y_s < 1) ? 1 : y_s + 1;
+                int i_y_e = (y_e > N) ? N + 1 : y_e;
+
+                #pragma acc kernels present(a[xx_s:len_x][yy_s:len_y], new_b[nb_xx_s:nb_len_x][nb_yy_s:nb_len_y])
+                for (int j = j_x_s; j < j_x_e; j++) {
+                    for (int i = i_y_s; i < i_y_e; i++) {
+                        new_b[j - j_x_s + nb_xx_s][i - i_y_s + nb_yy_s] = delT * (a[j + 1][i] + a[j - 1][i] + a[j][i + 1] + a[j][i - 1] + a[j][i]);
+                    }
+                }
+
+                #pragma acc kernels present(a[xx_s:len_x][yy_s:len_y], new_b[nb_xx_s:nb_len_x][nb_yy_s:nb_len_y])
+                for (int j = j_x_s; j < j_x_e; j++) {
+                    for (int i = i_y_s; i < i_y_e; i++) {
+                        a[j][i] = new_b[j - j_x_s + nb_xx_s][i - i_y_s + nb_yy_s];
+                    }
+                }
+                x_s++;
+                y_s++;
+                x_e--;
+                y_e--;
+            }
+
+            #pragma acc kernels present(a[xx_s:len_x][yy_s:len_y], b[x:n][y:n]) 
+            for (int j = x; j < (x + n); j++) {
+                for (int i = y; i < (y + n); i++) {
+                    b[j][i] = delT * (a[j + 1][i] + a[j - 1][i] + a[j][i + 1] + a[j][i - 1] + a[j][i]);
+                }
+            }
+        }
+         // 清理
+        cudaEventDestroy(start);
+        cudaEventDestroy(stop);
+        // free(new_b);
+    } else {
+        nb_xx_s= (x_s < 0) ? BLOCK_LEVEL-1 : 0; 
+        nb_yy_s= (y_s < 0) ? BLOCK_LEVEL-1 : 0;
+        nb_xx_e = (x_e > N + 1) ? th_cpu+BLOCK_LEVEL : th_cpu-1+2*BLOCK_LEVEL;
+        nb_yy_e = (y_e > N + 1) ? th_cpu+BLOCK_LEVEL : th_cpu-1+2*BLOCK_LEVEL;
+
+        int len_y_yy_s = yy_e + 1 - yy_s;
+
+        #pragma omp simd
+        for (int j = xx_s; j < xx_e + 1; j++) {
+            memcpy(&new_a[j - xx_s + nb_xx_s][nb_yy_s], &a[j][yy_s], len_y_yy_s * sizeof(double));
+            memcpy(&new_b[j - xx_s + nb_xx_s][nb_yy_s], &b[j][yy_s], len_y_yy_s * sizeof(double));
+        }
+
+        for (int iter = it; iter < blockEnd - 1; iter++) {
+            int j_x_s = (x_s < 1) ? BLOCK_LEVEL : nb_xx_s + 1;
+            int j_x_e = (x_e > N + 1) ? th_cpu + BLOCK_LEVEL : nb_xx_e;
+            int i_y_s = (y_s < 1) ? BLOCK_LEVEL : nb_yy_s + 1;
+            int i_y_e = (y_e > N + 1) ? th_cpu + BLOCK_LEVEL : nb_yy_e;
+
+            for (int j = j_x_s; j < j_x_e; j++) {
+                #pragma omp simd
+                for (int i = i_y_s; i < i_y_e; i++) {
+                    new_b[j][i] = delT * (new_a[j + 1][i] + new_a[j - 1][i] + new_a[j][i + 1] + new_a[j][i - 1] + new_a[j][i]);
+                }
+            }
+
+            double (*tmp)[nn];
+            tmp = new_a;
+            new_a = new_b;
+            new_b = tmp;
+
+            nb_xx_s++;
+            nb_yy_s++;
+            nb_xx_e--;
+            nb_yy_e--;
+        }
+
+        int tx = x - BLOCK_LEVEL;
+        int ty = y - BLOCK_LEVEL;
+
+        for (int j = x; j < (x + n); j++) {
+            #pragma omp simd
+            for (int i = y; i < (y + n); i++) {
+                b[j][i] = delT * (new_a[j - tx + 1][i - ty] + new_a[j - tx - 1][i - ty] + new_a[j - tx][i - ty + 1] + new_a[j - tx][i - ty - 1] + new_a[j - tx][i - ty]);
+            }
+        }
+    }
+}

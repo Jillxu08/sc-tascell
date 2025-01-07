@@ -23,15 +23,29 @@ MOPT=-acc
 # CFLAGS=-I/usr/include/openblas
 # for mm using nvblas
 # MOPT=-lnvblas -lm -lpthread
-CFLAGS=-I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/include 
-LDFLAGS=-L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/lib64 -lcudart 
 
-# OPT=-O3 -lm -std=c99 -mcmodel=medium -march=native $(MOPT) $(CFLAGS) $(LDFLAGS) mm_cu.c
+# CFLAGS =-I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/include 
+# LDFLAGS =-L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/lib64 -lcudart 
 
-# OPT=-O3 -lm -march=native -Mvect -Minline -Mconcur -std=c99 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
+
+
 # OPT=-O3 -lm -march=native -std=c99 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
+# OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc80 -tp zen3 -Minfo=accel -lm $(CFLAGS) $(LDFLAGS) stencil_acc_multi.c  #best perforamnce
 
-OPT=-lm -acc -ta=nvidia -O3 -mp -msse4.2 -lcudart -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
+
+
+CFLAGS =-I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/include
+LDFLAGS = -L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/lib64 \
+          -L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/math_libs/lib64 \
+          -lcudart -lnvblas 
+
+OPT=-O3 -lm -lpthread -std=c99 -mcmodel=medium -march=native $(MOPT) $(CFLAGS) $(LDFLAGS) mm_cu.c -Wl,--no-relax
+
+
+# -mcmodel=medium: Specifies the memory model,
+# -Minfo=accel: Outputs detailed information about the accelerations
+# Targeting AMD Zen 3 CPUs: The -tp zen3 flag ensures that the code is optimized for running on an AMD Zen 3 processor.
+
 
 # mm_c_th.c
 # OPT+=-mcmodel=medium

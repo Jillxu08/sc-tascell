@@ -1,4 +1,4 @@
-#define N 16
+#define N 8192
 // // 131072L, 65536L, 32768, 16384, 8192, 4096, 2048
 // #define th_gpu1 4096 // th_gpu > BLOCK_LEVEL
 // #define th_gpu2 1024
@@ -11,7 +11,6 @@
 // #define CONDUCTIVITY_0 0.1
 // #define CONDUCTIVITY_1 0.2
 // #define CONDUCTIVITY_2 0.3
-
 
 extern int th_gpu1, th_gpu2;
 extern int th_cpu;
