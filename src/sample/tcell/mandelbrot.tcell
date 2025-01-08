@@ -187,10 +187,11 @@
         ;; (if (and (<= n th_gpu1) (>= n th_gpu2) (== WORKER_ID 0))
             (begin
                 ;; TCELL-CHECK-REQ 
-                ;; (csym::fprintf stderr "GPU: WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2) 
+                ;; (csym::fprintf stderr "worker_type=GPU, WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2) 
+                (csym::fprintf stderr "GPU %d %d %d~%" WORKER-ID i1 i2) 
                 (csym::mb_acc i1 i2)
                 (csym::pthread_mutex_unlock (ptr myMutex)) ;relase lock
-                (csym::fprintf stderr "GPU: WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2) 
+                ;; (csym::fprintf stderr "GPU: WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2) 
 
                 ;; (csym::fprintf stderr "GPU: WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2)
                 ;; (== (csym::pthread_mutex_trylock (ptr myMutex)) 0)
@@ -207,7 +208,7 @@
                 (if (<= n th_cpu)
                 ;; (if (and (<= n th_cpu) (<= i2 250000000))
                     (begin 
-                        (csym::fprintf stderr "CPU: WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2)
+                        ;; (csym::fprintf stderr "CPU: WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2)
                         ;; (= start3 (csym::get-wall-time))
                         ;; (csym::mb_acc_cpu i1 i2)
                         ;; (= end3 (csym::get-wall-time))
@@ -215,7 +216,8 @@
                         ;; (csym::fprintf stderr "time_cpu = %5.4f  ~%" elapsed3)
                         ;; (csym::fprintf stderr "CPU: time_cpu = %5.4f, WORKER-ID = %d, n = %d, i1 = %d, i2 = %d ~%" elapsed3 WORKER-ID n i1 i2)
                         ;; (csym::fprintf stderr "n_cpu = %d ~%" n)
-
+                        ;; (csym::fprintf stderr "worker_type=CPU, WORKER-ID = %d, i1 = %d, i2 = %d ~%" WORKER-ID i1 i2)
+                        (csym::fprintf stderr "CPU %d %d %d~%" WORKER-ID i1 i2) 
                         (csym::mb_acc_cpu i1 i2)
                     )
                     (begin

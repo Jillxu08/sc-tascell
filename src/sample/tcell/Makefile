@@ -28,6 +28,7 @@ ICC=icc
 
 # 1.for mandelbrot.tcell
 GCC=nvc
+# OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc61 -msse4.2 -mp -Minfo=accel -lm $(MOPT) $(CFLAGS) $(LDFLAGS) mandelbrot_acc.c -Xlinker --no-relax
 # OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc61 -tp skylake -mp -Minfo=accel -lm $(MOPT) $(CFLAGS) $(LDFLAGS) mandelbrot_acc.c -Xlinker --no-relax
 OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc80 -tp zen3 -mp -Minfo=accel -lm $(MOPT) $(CFLAGS) $(LDFLAGS) mandelbrot_acc.c -Xlinker --no-relax
 

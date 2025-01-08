@@ -7,6 +7,27 @@
 #============ Shell Script ============
 set -x
 
+# GPU data transfer
+# srun nsys profile --trace=cuda ./mandelbrot-clos -n 1 -i "0 4 50000 8000 0 0"   #GPU only
+# srun nsys profile --trace=cuda ./mandelbrot-clos -n 17 -i "0 4 50000 2000 0 4"  #hybrid 
+
+# task assignment
+srun ./mandelbrot-clos -n 16 -i "0 4 50000 0 0 1"  #CPU only
+# srun ./mandelbrot-clos -n 17 -i "0 4 50000 2000 0 4"  #hybrid 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # srun nsys profile --trace=cuda,osrt -o mandelbrot_profile ./mandelbrot-clos -n 65 -i "0 4 50000 2000 2 5"
 
 # # NVCOMPILER_ACC_NOTIFY=2 
@@ -20,9 +41,12 @@ set -x
 
 # #!/bin/bash
 # # # bash ./mm_v.sh 
+# srun nsys profile --trace=cuda ./mandelbrot-clos -n 8 -i "0 4 50000 2000 8 8"
 
 # srun ./mandelbrot-clos -n 1 -i "0 4 50000 8000 0 0"
-srun ./mandelbrot-clos -n 2 -i "0 4 50000 2000 3 6"
+
+
+
 # srun ./mandelbrot-clos -n 3 -i "0 4 50000 2000 6 7"
 # srun ./mandelbrot-clos -n 5 -i "0 4 50000 2000 3 6"
 # srun ./mandelbrot-clos -n 9 -i "0 4 50000 2000 8 8"
