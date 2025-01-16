@@ -24,11 +24,9 @@ MOPT=-acc
 # for mm using nvblas
 # MOPT=-lnvblas -lm -lpthread
 
+# stencil_para_gpu
 # CFLAGS =-I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/include 
 # LDFLAGS =-L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/lib64 -lcudart 
-
-
-
 # OPT=-O3 -lm -march=native -std=c99 -mp -msse4.2 $(MOPT) -Minfo=accel $(CFLAGS) $(LDFLAGS) $(LD_PRELOAD) stencil_acc_multi.c
 # OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc80 -tp zen3 -Minfo=accel -lm $(CFLAGS) $(LDFLAGS) stencil_acc_multi.c  #best perforamnce
 

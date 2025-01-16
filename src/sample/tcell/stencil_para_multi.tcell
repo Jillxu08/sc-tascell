@@ -203,9 +203,11 @@
     (begin
       ;; (= start (csym::get-wall-time))
       (csym::sgpu_tb x y n WORKER-ID it)
+      (csym::fprintf stderr "GPU %d %d %d %d %d ~%" WORKER-ID it n x y)
       ;; (= end (csym::get-wall-time))
       ;; (csym::fprintf stderr "GPU: worker_id=%d, it=%d, n=%d, x=%d, y=%d, start=%5.4f, end=%5.4f, time=%5.4f~%" WORKER-ID it n x y start end (* 10 (- end start)))
       (csym::pthread_mutex_unlock (ptr myMutex))
+      
       ) ;relase lock
       ;; (csym::perror "pthread_mutex_trylock ~%") 
       ;; (csym::gpu x y n WORKER-ID it) 
@@ -219,8 +221,9 @@
           (csym::scpu_tb x y n WORKER-ID it)
           ;; (= end1 (csym::get-wall-time))
           ;; (csym::fprintf stderr "CPU: worker_id=%d, it=%d, n=%d, x=%d, y=%d, start=%5.4f, end=%5.4f, time=%5.4f~%" WORKER-ID it n x y start end (* 10 (- end1 start1)))
+          ;; (csym::fprintf stderr "CPU %d %d %d %d, y=%d, start=%5.4f, end=%5.4f, time=%5.4f~%" WORKER-ID it n x y start end (* 10 (- end1 start1)))
 
-          ;; (csym::fprintf stderr "CPU: wroker_id=%d, it=%d, n=%d, x=%d, y=%d ~%" WORKER-ID it n x y)
+          (csym::fprintf stderr "CPU %d %d %d %d %d ~%" WORKER-ID it n x y)
           ;; (csym::tb x y n WORKER-ID it 0)
           ;; (csym::scpu_tb x y n WORKER-ID it)
           ;; (csym::cpu x y n WORKER-ID it)
