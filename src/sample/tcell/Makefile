@@ -22,11 +22,14 @@ ICC=icc
 
 # complier hmat_ct_reds.tcell with CPU
 # GCC=nvc
-# OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc80 -tp zen3 -Minfo=accel -lm bem_data/filling_wo_openacc.c bem_data/bem_file.c -o hmat_ct_reds
+# OPT=-O3 -std=c99 -mcmodel=medium -tp zen3 -acc=gpu -gpu=cc80 -Minfo=accel -lm bem_data/filling_wo_op.c bem_data/bem_file.c -o hmat_ct_reds
 
 # complier hmat_ct_reds.tcell with GPU
 GCC=nvc
-OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc80 -tp zen3 -Minfo=accel -lm bem_data/filling.c bem_data/bem_file.c -o hmat_ct_reds
+# OPT=-O3 -std=c99 -mcmodel=medium -lm bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds
+OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -g -gpu=cc80 -lm bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds
+
+# OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc80 -tp zen3 -Minfo=accel -lm bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds
 
 
 # Keyword for L-Closures and Closures in XC Cube. Don't modify.

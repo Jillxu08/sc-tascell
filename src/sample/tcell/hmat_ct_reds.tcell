@@ -1,3 +1,5 @@
+;; Jing Xu: GPU version of H-Matrix construction with TASCell
+
 (%ifndef* NF-TYPE
   (%defconstant NF-TYPE GCC)) ; one of (GCC LW-SC CL-SC XCC XCCCL) 
 (%include "rule/tcell-setrule.sh")
@@ -146,8 +148,8 @@
 ;; (def privateCTlist (ptr cluster))
 ;; (def resultCTlist (ptr cluster))
 ;; (def nlf long 650000)
-(def nofc int)
-(def nNode int)
+;; (def nofc int)
+;; (def nNode int)
 (def CTcounter int 0)
 
 ;; (def zgmid (ptr (array double 3)))
@@ -360,13 +362,14 @@
                (<= (fref (aref resultCTlist st-cltt) zwdth) (* zdistlt zeta)))
            (and (>= ndl nleaf) (>= ndt nleaf)))
     (begin
-      (= (fref (aref WDATA.leafnode-list WDATA.nlf) nstrtl) nstrtl)
-      (= (fref (aref WDATA.leafnode-list WDATA.nlf) ndl) ndl)
-      (= (fref (aref WDATA.leafnode-list WDATA.nlf) nstrtt) nstrtt)
-      (= (fref (aref WDATA.leafnode-list WDATA.nlf) ndt) ndt)
-      (= (fref (aref WDATA.leafnode-list WDATA.nlf) kt) 0)
+      ; rank matrix
+      (= (fref (aref WDATA.leafnode-list WDATA.nlf) nstrtl) nstrtl) ; r: where in the whole matrix
+      (= (fref (aref WDATA.leafnode-list WDATA.nlf) ndl) ndl) ; r: leaf matrix size
+      (= (fref (aref WDATA.leafnode-list WDATA.nlf) nstrtt) nstrtt) ; c: where in the whole matrix
+      (= (fref (aref WDATA.leafnode-list WDATA.nlf) ndt) ndt) ; c: leaf matrix size
+      (= (fref (aref WDATA.leafnode-list WDATA.nlf) kt) 0) ; rank of matrix, unknow until the filling is done
       (= (fref (aref WDATA.leafnode-list WDATA.nlf) ltmtx) 1)
-      (csym::fill_sub_leafmtx (ptr (aref WDATA.leafnode-list WDATA.nlf)) 0.0)
+      (csym::fill_sub_leafmtx (ptr (aref WDATA.leafnode-list WDATA.nlf)) 0.0 WORKER-ID)
       (+= WDATA.elem-sum (* (+ ndl ndt) (fref (aref WDATA.leafnode-list WDATA.nlf) kt)))
       (= WDATA.nlf (+ WDATA.nlf 1))
       ;; (if (and (and (== nstrtl 0) (== nstrtt 2620)) (and (== ndl 2620) (== ndt 10400)))
@@ -374,6 +377,7 @@
       ;; )
     )
     (begin
+      ;full matrix
       (if (or (== nnsonl 0) (== nnsont 0) (<= ndl nleaf) (<= ndt nleaf))
         (begin
 	        (= (fref (aref WDATA.leafnode-list WDATA.nlf) nstrtl) nstrtl)
@@ -381,7 +385,9 @@
           (= (fref (aref WDATA.leafnode-list WDATA.nlf) nstrtt) nstrtt)
           (= (fref (aref WDATA.leafnode-list WDATA.nlf) ndt) ndt)
           (= (fref (aref WDATA.leafnode-list WDATA.nlf) ltmtx) 2)
-          (csym::fill_sub_leafmtx (ptr (aref WDATA.leafnode-list WDATA.nlf)) 0.0)
+          (csym::fill_sub_leafmtx (ptr (aref WDATA.leafnode-list WDATA.nlf)) 0.0 WORKER-ID)
+          (+= WDATA.elem-sum (* (+ ndl ndt) (fref (aref WDATA.leafnode-list WDATA.nlf) kt)))
+          (= WDATA.nlf (+ WDATA.nlf 1))
           (+= WDATA.elem-sum (* ndl ndt))
           (= WDATA.nlf (+ WDATA.nlf 1)))
         (begin
@@ -495,10 +501,15 @@
       (= count bi.nFace)
       (= zgmid bi.coordOfFace)
       (= f2n bi.face2node)))
+  
   (csym::fclose file)
 
   (= nofc count)
   (= nNode countOfNode)
+  (csym::data_transfer)
+
+  (csym::fprintf stderr "nofc=%d, nNode=%d ~%" nofc nNode)
   ;; (= privateCTlist (cast (ptr cluster) (csym::malloc (* (sizeof cluster) LN))))
   (= resultCTlist (cast (ptr cluster) (csym::malloc (* (sizeof cluster) LN))))
+
 )

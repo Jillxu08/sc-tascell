@@ -6,10 +6,13 @@
 // #include <mkl.h>
 
 extern struct cluster* resultCTlist;
-extern int countCT;
+// extern int countCT;
 extern double (*zgmid)[3];
 extern double (*bgmid)[3];
 extern int (*f2n)[3];
+extern int nofc;
+extern int nNode;
+
 
 struct leafmtx{
   int ltmtx;                         //kind of the matrix; 1:rk 2:full
@@ -26,7 +29,7 @@ struct cluster{
   int ndscd;                         //number of descendants
   double bmin[3];
   double bmax[3];
-  double zwdth;
+  double zwdth;          //width of the cluster
   int offsets[2];
   int nnsons;    
   long nnnd;
@@ -46,7 +49,7 @@ double dot_product(double* v, double* u, int n);
 
 double entry_ij(int i, int j);
 
-void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat);
+void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat, int id);
 double face_integral2(double xs[], double ys[], double zs[], double x, double y, double z);
 
 int max(int a, int b);
@@ -56,3 +59,5 @@ int maxabsvalloc_d(double* za, int nd);
 
 
 double simple_dnrm2(int n, const double *x, int incx);
+void data_transfer();
+void check_gpu_usage();
