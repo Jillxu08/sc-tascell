@@ -13,6 +13,7 @@ extern int (*f2n)[3];
 extern int nofc;
 extern int nNode;
 
+extern pthread_mutex_t gpu_lock;
 
 struct leafmtx{
   int ltmtx;                         //kind of the matrix; 1:rk 2:full
@@ -50,6 +51,7 @@ double dot_product(double* v, double* u, int n);
 double entry_ij(int i, int j);
 
 void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat, int id);
+void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat, int id);
 double face_integral2(double xs[], double ys[], double zs[], double x, double y, double z);
 
 int max(int a, int b);
@@ -61,3 +63,6 @@ int maxabsvalloc_d(double* za, int nd);
 double simple_dnrm2(int n, const double *x, int incx);
 void data_transfer();
 void check_gpu_usage();
+
+int try_acquire_gpu_lock();
+void release_gpu_lock();

@@ -1,4 +1,6 @@
 ;; Jing Xu: GPU version of H-Matrix construction with TASCell
+;;H-Matrix construction: CT(seq), BCT and filling unite (parallel using Tascell)
+
 
 (%ifndef* NF-TYPE
   (%defconstant NF-TYPE GCC)) ; one of (GCC LW-SC CL-SC XCC XCCCL) 
@@ -18,11 +20,11 @@
 (c-exp "#include \"bem_data/bem_file.h\"")
 (c-exp "#include \"bem_data/filling.h\"")
 
-(%defconstant PL 50)                ;;TN
+;; (%defconstant PL 50)                ;;TN
 (%defconstant PB 10)              ;;TN of BCT
 (%defconstant Check-interval 1)
 (%defconstant LN 220000)
-(%defconstant ND 2)
+;; (%defconstant ND 2)
 (%defconstant BCTN 2500000)
 
 (%defconstant TCELL-CHECK-REQ 1)
@@ -30,7 +32,7 @@
 (extern-decl sv_socket int)
 
 ;; ; Sphere 10ts small data for debug
-;; (%defconstant INPUT_DEFAULT "../bem_data/input_10ts.txt")
+;; (%defconstant INPUT_DEFAULT "/bem_data/input_10ts.txt")
 ;; ; Sphere 100ts
 (%defconstant INPUT_DEFAULT "bem_data/input_10ts.txt")
 ;; ; SphereCube 10ts_c30_3_3_4
@@ -360,7 +362,7 @@
   (def zdistlt double (csym::dist_2cluster st-cltl st-cltt))
   (if (and (or (<= (fref (aref resultCTlist st-cltl) zwdth) (* zdistlt zeta))
                (<= (fref (aref resultCTlist st-cltt) zwdth) (* zdistlt zeta)))
-           (and (>= ndl nleaf) (>= ndt nleaf)))
+           (and (>= ndl nleaf) (>= ndt nleaf))) ;condition for leaf matrix 是否符合近似条件
     (begin
       ; rank matrix
       (= (fref (aref WDATA.leafnode-list WDATA.nlf) nstrtl) nstrtl) ; r: where in the whole matrix
@@ -378,7 +380,7 @@
     )
     (begin
       ;full matrix
-      (if (or (== nnsonl 0) (== nnsont 0) (<= ndl nleaf) (<= ndt nleaf))
+      (if (or (== nnsonl 0) (== nnsont 0) (<= ndl nleaf) (<= ndt nleaf)) ;分割是否已经是叶子节点了
         (begin
 	        (= (fref (aref WDATA.leafnode-list WDATA.nlf) nstrtl) nstrtl)
           (= (fref (aref WDATA.leafnode-list WDATA.nlf) ndl) ndl)
