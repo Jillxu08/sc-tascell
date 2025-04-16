@@ -1,5 +1,5 @@
-// with openacc pragma
-// openacc allcate memory on device
+// without acaplus function acceleration, with dense matrix acceleration. 
+// with hybrid execution check
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -8,12 +8,38 @@
 #include "filling.h"
 #include <openacc.h>
 #include <pthread.h>
+// #ifdef _OPENACC
+// #include <cuda_runtime.h>
+// #endif
 
+static struct {
+  int total_dense_calls;  // 只统计密集矩阵调用次数
+  int gpu_executions;     // GPU实际执行次数
+  int cpu_executions;     // CPU实际执行次数
+  double gpu_time;
+  double cpu_time;
+} call_stats = {0};
 
-// #pragma acc routine(sqrt) seq
-
-// #pragma acc routine seq 
-// double entry_ij(int i, int j);
+void print_call_stats() {
+  printf("Dense matrix fill statistics:\n");
+  printf("Total dense calls: %d\n", call_stats.total_dense_calls);
+  printf("GPU executions: %d (%.1f%%)\n", 
+        call_stats.gpu_executions,
+        (float)call_stats.gpu_executions/call_stats.total_dense_calls*100);
+  printf("CPU executions: %d (%.1f%%)\n",
+        call_stats.cpu_executions,
+        (float)call_stats.cpu_executions/call_stats.total_dense_calls*100);
+  printf("Total GPU time: %.3f sec\n", call_stats.gpu_time);
+  printf("Total CPU time: %.3f sec\n", call_stats.cpu_time);
+  
+  // 计算未统计比例（应为0）
+  int unaccounted = call_stats.total_dense_calls - 
+                   (call_stats.gpu_executions + call_stats.cpu_executions);
+  if (unaccounted != 0) {
+      printf("Warning: %d calls not accounted (%.1f%%)\n",
+            unaccounted, (float)unaccounted/call_stats.total_dense_calls*100);
+  }
+}
 
 #pragma acc routine seq
 double simple_dnrm2(int n, const double *x, int incx) {
@@ -35,6 +61,7 @@ double (*bgmid)[3];
 int (*f2n)[3];
 int nofc, nNode;
 pthread_mutex_t gpu_lock = PTHREAD_MUTEX_INITIALIZER;
+int denseB;
 
 // 模拟锁尝试获取函数
 int try_acquire_gpu_lock() {
@@ -247,9 +274,7 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
     printf("ntries_row=%d ntries_col=%d ntries=%d\n", ntries_row, ntries_col, ntries);
     printf("k=%d\n", k);
   }
-
   return k;
-
 }
 
 // #pragma acc routine seq
@@ -271,12 +296,16 @@ void data_transfer(){
 //st_lf：指向 leafmtx 结构体的指针，存储矩阵数据
 void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat, int id){
   int use_gpu = 0;
+  clock_t start_time = clock();
+  int actually_ran_on_gpu = 0;  // 0=CPU, 1=GPU
 
   if (try_acquire_gpu_lock()) {
-      acc_set_device_type(acc_device_nvidia);  // 明示的にGPUデバイスを選択
-      use_gpu = 1;
+    acc_set_device_type(acc_device_nvidia);
+    use_gpu = 1;
+    // call_stats.gpu_calls++;
   } else {
-      acc_set_device_type(acc_device_host);  // フォールバック：CPU使用
+      acc_set_device_type(acc_device_host);
+      // call_stats.cpu_calls++;
   }
 
   double eps = 1.0e-8;    
@@ -318,53 +347,67 @@ void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat, int id){
   }
   
   else if(ltmtx == 2){
+    denseB++;
+    call_stats.total_dense_calls++;
     st_lf->a1 = (double *)malloc(sizeof(double) * ns);
+    // 记录本次执行是否真正在 GPU 上运行
+    // int actually_ran_on_gpu = 0;
 
-    // double (*tempa1)[ndt];
-    // tempa1 = (double(*)[ndt])st_lf->a1;
-
-    // printf("error2!\n");
-    #pragma acc data if(use_gpu) create(st_lf->a1[0:ns]) present(zgmid, f2n, bgmid)
+    #pragma acc data if(use_gpu) copyout(st_lf->a1[0:ns]) present(zgmid, f2n, bgmid) 
     {
-      double (*tempa1)[ndt];
-      tempa1 = (double(*)[ndt])st_lf->a1;
-      check_gpu_usage();
-      printf("worker_id= %d!\n", id);
+      double (*tempa1)[ndt] = (double(*)[ndt])st_lf->a1;
+      // check_gpu_usage();
+      
+      // int dev = acc_on_device(acc_device_nvidia);
+      #pragma acc parallel loop if(use_gpu) \
+          present(zgmid, f2n, bgmid, tempa1) reduction(+:actually_ran_on_gpu)  // 关键修复：使用 reduction
+      for(il = 0; il < ndl; il++) {
+        #ifdef _OPENACC
+        if (acc_on_device(acc_device_not_host)) {
+          actually_ran_on_gpu = 1;  
+        }
+        #endif
 
-      #pragma acc parallel loop if(use_gpu) present(zgmid, f2n, bgmid, tempa1)
-      for(il=0;il<ndl;il++){
-        ill = il + nstrtl;
-        for(it=0;it<ndt;it++){
+        ill = il + nstrtl;  
+        #pragma acc loop 
+        for(it = 0; it < ndt; it++) {
           itt = it + nstrtt;
-          // tempa1[il][it] = entry_ij(ill, itt);
-          // fprintf(stderr,"1:ndt=%d,nstrtt=%d,ndt+nstrtt=%d\n",ndt, nstrtt,ndt+nstrtt);
-          
           int n[3];
           double xf[3], yf[3], zf[3];
           double xp = zgmid[ill][0];
           double yp = zgmid[ill][1];
           double zp = zgmid[ill][2];
           
-          for(int i=0;i<3;i++){
-            n[i] = f2n[itt][i];
+          // Sequential loop to compute face integral values
+          #pragma acc loop seq
+          for (int i = 0; i < 3; i++) {
+              n[i] = f2n[itt][i];
+              xf[i] = bgmid[n[i]][0];
+              yf[i] = bgmid[n[i]][1];
+              zf[i] = bgmid[n[i]][2];
           }
-          for(int i=0;i<3;i++){
-            xf[i] = bgmid[n[i]][0];
-            yf[i] = bgmid[n[i]][1];
-            zf[i] = bgmid[n[i]][2];
-          }
-          // printf("error2!\n");
-          // tempa1[il][it] = 0.0;
           tempa1[il][it] = face_integral2(xf, yf, zf, xp, yp, zp);
-
-          // check_gpu_usage();
         }
       }
-    // copy data from GPU to CPU, `st_lf->a1`
-    #pragma acc update self(st_lf->a1[0:ns]) if(use_gpu)
+      // #pragma acc wait(1)
+    }
+    // 根据实际执行设备更新统计
+    if (actually_ran_on_gpu>0) {
+      call_stats.gpu_executions++;
+    } else {
+      call_stats.cpu_executions++;
     }
   }
+  // 记录执行时间
+  double elapsed = (double)(clock() - start_time) / CLOCKS_PER_SEC;
   if (use_gpu) {
+      call_stats.gpu_time += elapsed;
+  } else {
+      call_stats.cpu_time += elapsed;
+  }
+
+  if (use_gpu) {
+    // #pragma acc wait(1)
     release_gpu_lock();
   }
 }   
@@ -640,7 +683,6 @@ void adot_dsm(double* zau, double* zaa, double* zab, int im, int ndl, int ndt, i
     }
   }
 }
-
 
 #pragma acc routine seq
 double dot_product(double* v, double* u, int n){
