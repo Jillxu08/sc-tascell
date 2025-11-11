@@ -1,5 +1,3 @@
-// without acaplus function acceleration, with dense matrix acceleration. 
-// with hybrid execution check
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -8,9 +6,14 @@
 #include "filling.h"
 #include <openacc.h>
 #include <pthread.h>
-// #ifdef _OPENACC
+#include <string.h>
 // #include <cuda_runtime.h>
-// #endif
+// #include <cublas_v2.h>
+#include <cblas.h>
+// #include <sys/time.h>
+
+// cublasHandle_t handle; 
+// static cublasHandle_t g_cublas_handle = NULL;
 
 static struct {
   int total_dense_calls;  // 只统计密集矩阵调用次数
@@ -20,73 +23,46 @@ static struct {
   double cpu_time;
 } call_stats = {0};
 
-void print_call_stats() {
-  printf("Dense matrix fill statistics:\n");
-  printf("Total dense calls: %d\n", call_stats.total_dense_calls);
-  printf("GPU executions: %d (%.1f%%)\n", 
-        call_stats.gpu_executions,
-        (float)call_stats.gpu_executions/call_stats.total_dense_calls*100);
-  printf("CPU executions: %d (%.1f%%)\n",
-        call_stats.cpu_executions,
-        (float)call_stats.cpu_executions/call_stats.total_dense_calls*100);
-  printf("Total GPU time: %.3f sec\n", call_stats.gpu_time);
-  printf("Total CPU time: %.3f sec\n", call_stats.cpu_time);
-  
-  // 计算未统计比例（应为0）
-  int unaccounted = call_stats.total_dense_calls - 
-                   (call_stats.gpu_executions + call_stats.cpu_executions);
-  if (unaccounted != 0) {
-      printf("Warning: %d calls not accounted (%.1f%%)\n",
-            unaccounted, (float)unaccounted/call_stats.total_dense_calls*100);
-  }
-}
-
-#pragma acc routine seq
-double simple_dnrm2(int n, const double *x, int incx) {
-    double norm = 0.0;
-    // #pragma acc loop seq
-    for (int i = 0; i < n; i++) {
-        norm += x[i * incx] * x[i * incx];
-    }
-    return sqrt(norm);
-}
-
-#pragma acc routine(calloc)
-void *calloc(size_t num, size_t size);
-
 struct cluster* resultCTlist;  //store nodes of cluster tree
+#pragma acc declare create(resultCTlist)
+pthread_mutex_t myMutex = PTHREAD_MUTEX_INITIALIZER;
+
 int countCT=0;
+int nofc, nNode;
+int kparam = 50; 
 double (*zgmid)[3];
 double (*bgmid)[3];
 int (*f2n)[3];
-int nofc, nNode;
-pthread_mutex_t gpu_lock = PTHREAD_MUTEX_INITIALIZER;
 int denseB;
-
-// 模拟锁尝试获取函数
-int try_acquire_gpu_lock() {
-    return pthread_mutex_trylock(&gpu_lock) == 0;
-}
-
-// 模拟锁释放函数
-void release_gpu_lock() {
-    pthread_mutex_unlock(&gpu_lock);
-}
+int th_ds, th_lr; // threshold for dense and low-rank matrix filling
 
 // when filling the approximate block, calling acaplus
-// #pragma acc routine seq
-int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, int kmax, double eps, double znrmmat, double pACA_EPS){
-  double *prow, *pcol, *pb_ref, *pa_ref;
-  int *lrow_done, *lcol_done;
+int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, int kmax, double eps, double znrmmat, double pACA_EPS, 
+              double* pa_ref, double* pb_ref, int* lrow_done, int* lcol_done, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3], int id, int use_gpu)
+{
+  int nmax = (ndl > ndt) ? ndl : ndt;
+  double* zau = (double*)calloc(nmax, sizeof(double));
 
-  double (*zaa2)[ndl];
-  double (*zab2)[ndt];
-  zaa2 = (double(*)[ndl])zaa;
-  zab2 = (double(*)[ndt])zab;
+  // printf("zab present: %d\n", acc_is_present(zab, ndt * kmax * sizeof(double)));
+  // printf("zaa present: %d\n", acc_is_present(zaa, ndl * kmax * sizeof(double)));
+  // printf("lcol_done present: %d\n", acc_is_present(lcol_done, ndt * sizeof(int)));// 1 exist 
+  // printf("lrow_done present: %d\n", acc_is_present(lrow_done, ndl * sizeof(int)));
+  // printf("pa_ref present: %d\n", acc_is_present(pa_ref, ndl * sizeof(double)));
+  // printf("pb_ref present: %d\n", acc_is_present(pb_ref, ndt * sizeof(double)));
+  // printf("zau present: %d\n", acc_is_present(zau, nmax * sizeof(double)));
+  // printf("ndl present: %d\n", acc_is_present(&ndl, sizeof(int)));
   
-  int il,it,ib;
-
   int INCY = 1;
+
+  #pragma acc enter data if(use_gpu) copyin(zab[0:ndt*kmax], zaa[0:ndl*kmax],\
+                                            pa_ref[0:ndl], pb_ref[0:ndt],\
+                                            lrow_done[0:ndl], lcol_done[0:ndt],\
+                                            zau[0:nmax], INCY)
+
+  
+  double *prow, *pcol;
+  int il,it,ib;
+  // int INCY = 1;
   double za_ACA_EPS = 1.0e-10;
 
   double znrm = znrmmat * sqrt((double)ndl * (double)ndt);
@@ -95,58 +71,71 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
   int ntries = max(ndl, ndt) + 1;
   int ntries_row = 6;
   int ntries_col = 6;
+  // Allocate and initialize arrays with OpenACC
 
-  lrow_done = (int *)calloc(ndl, sizeof(int));
-  lcol_done = (int *)calloc(ndt, sizeof(int));
+  // lrow_done = (int *)calloc(ndl, sizeof(int));
+  // lcol_done = (int *)calloc(ndt, sizeof(int));
+
+  // pa_ref = (double *)malloc(ndl * sizeof(double));
+  // pb_ref = (double *)malloc(ndt * sizeof(double));
+
   int k = 0;
-
   int j_ref = 0;
-  pa_ref = (double *)malloc(ndl * sizeof(double));
-
-  comp_col(zaa, zab, ndl, ndt, k, j_ref, pa_ref, nstrtl, nstrtt, lrow_done);
+  // pa_ref = (double *)malloc(ndl * sizeof(double));                            
   
-  double colnorm = simple_dnrm2(ndl, pa_ref, INCY); // blas used›
+  double (*zaa2)[ndl] = (double(*)[ndl])zaa;
+  double (*zab2)[ndt] = (double(*)[ndt])zab;
+  
+  comp_col(zaa, zab, ndl, ndt, k, j_ref, pa_ref, nstrtl, nstrtt, lrow_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id);
+
+  // double colnorm = simple_dnrm2(ndl, pa_ref, INCY, use_gpu);
+  double colnorm = cblas_dnrm2(ndl, pa_ref, INCY); // blas used
   int i_ref = minabsvalloc_d(pa_ref, ndl);
   double rownorm = fabs(pa_ref[i_ref]);
-  pb_ref = (double *)malloc(ndt * sizeof(double));
-  comp_row(zaa, zab, ndl, ndt, k, i_ref, pb_ref, nstrtl, nstrtt, lcol_done);
-  rownorm = simple_dnrm2(ndt, pb_ref, INCY); // blas used
+  // pb_ref = (double *)malloc(ndt * sizeof(double));
+  comp_row(zaa, zab, ndl, ndt, k, i_ref, pb_ref, nstrtl, nstrtt, lcol_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id);
+
+  // rownorm = simple_dnrm2(ndt, pb_ref, INCY, use_gpu); // blas used
+  rownorm = cblas_dnrm2(ndt, pb_ref, INCY); // blas used
 
   double apxnorm = 0.0;
   int lstop_aca = 0;
   
   double col_maxval, row_maxval;
+  // Main ACA loop with OpenACC parallelization
   while(k < kmax && (ntries_row > 0 || ntries_col > 0) && ntries > 0){
     ntries--;
     pcol = &zaa2[k][0];
     prow = &zab2[k][0];
     col_maxval = 0.0;
-    int i = maxabsvalloc_d(pa_ref, ndl);
-    col_maxval = fabs(pa_ref[i]);
+    int i = maxabsvalloc_d(pa_ref, ndl); // find the index of the maximum absolute value in pa_ref
+    col_maxval = fabs(pa_ref[i]); // get the maximum absolute value in pa_ref
     row_maxval = 0.0;
-    int j = maxabsvalloc_d(pb_ref, ndt);
-    row_maxval = fabs(pb_ref[j]);
-
+    int j = maxabsvalloc_d(pb_ref, ndt); // find the index of the maximum absolute value in pb_ref
+    row_maxval = fabs(pb_ref[j]); // get the maximum absolute value in pb_ref
     double zinvmax;
     if(row_maxval > col_maxval){
       if(j != j_ref){
-        comp_col(zaa, zab, ndl, ndt, k, j, pcol, nstrtl, nstrtt, lrow_done);
+        comp_col(zaa, zab, ndl, ndt, k, j, pcol, nstrtl, nstrtt, lrow_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id);  
       }else{
-        for(il=0;il<ndl;il++){
-          pcol[il] = pa_ref[il];
-        }
+        memcpy(pcol, pa_ref, sizeof(double) * ndl); 
+        // for(il=0;il<ndl;il++){
+        //   pcol[il] = pa_ref[il];
+        // }
       }
-      i = maxabsvalloc_d(pcol, ndl);
-      col_maxval = fabs(pcol[i]);
+      i = maxabsvalloc_d(pcol, ndl); // find the index of the maximum absolute value in pcol
+      col_maxval = fabs(pcol[i]); // get the maximum absolute value in pcol
+      // printf("i=%d, col_maxval=%f\n", i, col_maxval);
 
       if(col_maxval < ACA_EPS && k >= 1){
         lstop_aca = 1;
       }else{
-        comp_row(zaa, zab, ndl, ndt, k, i, prow, nstrtl, nstrtt, lcol_done);
+        comp_row(zaa, zab, ndl, ndt, k, i, prow, nstrtl, nstrtt, lcol_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id);
         if(fabs(pcol[i]) > 1.0e-20){
           zinvmax = 1.0 / pcol[i];
         }else{
           k = max(k-1, 0);
+          // fprintf(stderr, "break\n");
           break;
         }
         for(il=0;il<ndl;il++){
@@ -155,11 +144,12 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
       }
     }else{
       if(i != i_ref){
-        comp_row(zaa, zab, ndl, ndt, k, i, prow, nstrtl, nstrtt, lcol_done);
+        comp_row(zaa, zab, ndl, ndt, k, i, prow, nstrtl, nstrtt, lcol_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id);
       }else{
-        for(il=0;il<ndt;il++){
-          prow[il] = pb_ref[il];
-        }
+        memcpy(prow, pb_ref, sizeof(double) * ndt);
+        // for(il=0;il<ndt;il++){
+        //   prow[il] = pb_ref[il];
+        // }
       }
       j = maxabsvalloc_d(prow, ndt);
       row_maxval = fabs(prow[j]);
@@ -167,7 +157,7 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
       if(row_maxval < ACA_EPS && k >= 1){
         lstop_aca = 1;
       }else{
-        comp_col(zaa, zab, ndl, ndt, k, j, pcol, nstrtl, nstrtt, lrow_done);
+        comp_col(zaa, zab, ndl, ndt, k, j, pcol, nstrtl, nstrtt, lrow_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id);
         if(fabs(prow[j]) > 1.0e-20){
           zinvmax = 1.0 / prow[j];
         }else{
@@ -187,7 +177,9 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
       for(il=0;il<ndt;il++){
         pb_ref[il] += prow[il] * zinvmax;
       }
-      rownorm = simple_dnrm2(ndt, pb_ref, INCY); // blas used
+      // rownorm = simple_dnrm2(ndt, pb_ref, INCY, use_gpu); // blas used
+      rownorm = cblas_dnrm2(ndt, pb_ref, INCY); // blas used
+      
     }
     if(i == i_ref || rownorm < ACA_EPS){
       if(i == i_ref){
@@ -198,8 +190,9 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
         i = i_ref;
         while(i != (i_ref + ndl - 1) % ndl && rownorm < za_ACA_EPS && ntries_row > 0){
           if(lrow_done[i] == 0){
-            comp_row(zaa, zab, ndl, ndt, k+1, i, pb_ref, nstrtl, nstrtt, lcol_done);
-            rownorm = simple_dnrm2(ndt, pb_ref, INCY);  // blas used
+            comp_row(zaa, zab, ndl, ndt, k+1, i, pb_ref, nstrtl, nstrtt, lcol_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id);
+            // rownorm = simple_dnrm2(ndt, pb_ref, INCY, use_gpu);  // blas used
+            rownorm = cblas_dnrm2(ndt, pb_ref, INCY);
             if(rownorm < ACA_EPS){
               lrow_done[i] = 1;
             }
@@ -218,7 +211,8 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
       for(il=0;il<ndl;il++){
         pa_ref[il] += pcol[il] * zinvmax;
       }
-      colnorm = simple_dnrm2(ndl, pa_ref, INCY);  // blas used
+      // colnorm = simple_dnrm2(ndl, pa_ref, INCY, use_gpu);  // blas used
+      colnorm = cblas_dnrm2(ndl, pa_ref, INCY); // blas used
     }
     if(j == j_ref || colnorm < ACA_EPS){
       if(j == j_ref){
@@ -229,8 +223,9 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
         j = j_ref;
         while(j != (j_ref + ndt - 1) % ndt && colnorm < za_ACA_EPS && ntries_col > 0){
           if(lcol_done[j] == 0){
-            comp_col(zaa, zab, ndl, ndt, k+1, j, pa_ref, nstrtl, nstrtt, lrow_done);
-            colnorm = simple_dnrm2(ndl, pa_ref, INCY);  // blas used
+            comp_col(zaa, zab, ndl, ndt, k+1, j, pa_ref, nstrtl, nstrtt, lrow_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id);
+            // colnorm = simple_dnrm2(ndl, pa_ref, INCY, use_gpu);  // blas used
+            colnorm = cblas_dnrm2(ndl, pa_ref, INCY); // blas used
             if(colnorm < ACA_EPS){
               lcol_done[j] = 1;
             }
@@ -250,7 +245,8 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
     }
 
     if(lstop_aca == 0){
-      double blknorm = simple_dnrm2(ndl, pcol, INCY) * simple_dnrm2(ndt, prow, INCY);  // blas used
+      // double blknorm = simple_dnrm2(ndl, pcol, INCY, use_gpu) * simple_dnrm2(ndt, prow, INCY, use_gpu);  // blas used
+      double blknorm = cblas_dnrm2(ndl, pcol, INCY) * cblas_dnrm2(ndt, prow, INCY);  // blas used
       if(k == 0){
         apxnorm = blknorm;
       }else{
@@ -265,7 +261,16 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
     }
 
     k++;
+    // printf("k=%d, ntries_row=%d, ntries_col=%d, ntries=%d\n", k, ntries_row, ntries_col, ntries);
   }
+  #pragma acc exit data delete(zaa[0:ndl*kmax], zab[0:ndt*kmax], \
+                               pa_ref[0:ndl], pb_ref[0:ndt], \
+                               lrow_done[0:ndl], lcol_done[0:ndt], zau[0:nmax]) if(use_gpu)
+  
+  if (use_gpu) {
+    pthread_mutex_unlock(&myMutex);
+  }
+  // printf("delete: pa_ref present: %d\n", acc_is_present(pa_ref, ndl * sizeof(double)));                            
 
   if(k < 1){
     printf("alert!\n");
@@ -277,7 +282,6 @@ int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, 
   return k;
 }
 
-// #pragma acc routine seq
 void check_gpu_usage() {
     acc_device_t device_type = acc_get_device_type();
     int device_num = acc_get_device_num(acc_device_nvidia);
@@ -290,27 +294,17 @@ void check_gpu_usage() {
 }
 
 void data_transfer(){
-  #pragma acc enter data copyin(zgmid[0:nofc][0:3], f2n[0:nofc][0:3], bgmid[0:nNode][0:3])
+  #pragma acc enter data copyin(nofc, nNode, zgmid[0:nofc][0:3], f2n[0:nofc][0:3], bgmid[0:nNode][0:3])
+  // if (g_cublas_handle == NULL) {
+  //   cublasCreate(&g_cublas_handle);
+  // }
 }
 
 //st_lf：指向 leafmtx 结构体的指针，存储矩阵数据
-void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat, int id){
-  int use_gpu = 0;
-  clock_t start_time = clock();
-  int actually_ran_on_gpu = 0;  // 0=CPU, 1=GPU
-
-  if (try_acquire_gpu_lock()) {
-    acc_set_device_type(acc_device_nvidia);
-    use_gpu = 1;
-    // call_stats.gpu_calls++;
-  } else {
-      acc_set_device_type(acc_device_host);
-      // call_stats.cpu_calls++;
-  }
-
+void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat, int id, int *gpu_lr_cnt, int *cpu_lr_cnt, int *gpu_ds_cnt, int *cpu_ds_cnt){
   double eps = 1.0e-8;    
   double ACA_EPS = 0.9 * eps;   
-  int kparam = 50; //max rank of the partition
+  // int kparam = 50; //max rank of the partition
   int ip,il,it; 
 
   int ndl = st_lf->ndl; // the length of the partition
@@ -319,22 +313,48 @@ void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat, int id){
   int nstrtl = st_lf->nstrtl; // the coordination of the first element of partition
   int nstrtt = st_lf->nstrtt; // the coordination of the first element of partition
   int ltmtx = st_lf->ltmtx;    // the kind of the matrix; 1:rk 2:full
-  // int kt;
+  int kt;
+  // int ill, itt; // the coordination of the element in the full matrix
+  int use_gpu = 0;
+  // clock_t start_time = clock();
+  // int actually_ran_on_gpu = 0;  // 0=CPU, 1=GPU
 
-  int ill, itt; // the coordination of the element in the full matrix
-  
-  // printf("error0!, ltmtx = %d\n", ltmtx);
   // Use low-rank approximate storage
-  if(ltmtx == -1){ 
+  if(ltmtx == 1){
+    // low_rank++;
+    // printf("workload: LR=%d, ndl=%d, ndt=%d\n", kparam * (ndl + ndt), ndl, ndt);
     st_lf->a1 = (double*)malloc(sizeof(double) * ndt * kparam); 
     st_lf->a2 = (double*)malloc(sizeof(double) * ndl * kparam);
     if(!st_lf->a1 || !st_lf->a2){
       printf("allocate a1 or a2 failed!\n");
       exit(99);
     }
-    // printf("error1!\n");
 
-    int kt = acaplus(st_lf->a2, st_lf->a1, ndl, ndt, nstrtl, nstrtt, kparam, eps, znrmmat, ACA_EPS); //the actual rank of the partition
+    double *pa_ref = (double *)malloc(ndl * sizeof(double));
+    double *pb_ref = (double *)malloc(ndt * sizeof(double));
+    int *lrow_done = (int *)calloc(ndl, sizeof(int));
+    int *lcol_done = (int *)calloc(ndt, sizeof(int));
+
+    // -- GPU or CPU filling low-rank matrix-----
+    // fprintf(stderr, "[Debug] workload=%d, th_lr=%d\n", kparam * (ndl + ndt), th_lr);
+    if((kparam * (ndl + ndt)) >= th_lr && pthread_mutex_trylock(&myMutex) == 0){
+      use_gpu = 1;
+      (*gpu_lr_cnt)++;
+      // fprintf(stderr, "workload: LR=%d, ndl=%d, ndt=%d, worker_id=%d, use_gpu=%d\n", kparam * (ndl + ndt), ndl, ndt, id, use_gpu);
+    }else{
+      // use_gpu = 0;
+      (*cpu_lr_cnt)++;
+    }
+    // fprintf(stderr, "workload1: LR=%d, ndl=%d, ndt=%d, worker_id=%d, use_gpu=%d\n", kparam * (ndl + ndt), ndl, ndt, id, use_gpu);
+
+    // double t_start = get_time();
+    kt = acaplus(st_lf->a2, st_lf->a1, ndl, ndt, nstrtl, nstrtt,
+                        kparam, eps, znrmmat, ACA_EPS,
+                        pa_ref, pb_ref, lrow_done, lcol_done, nofc, zgmid, f2n, bgmid, id, use_gpu); // the actual rank of the partition
+
+    // double t_end = get_time();
+    // fprintf(stderr, "LR: use_gpu=%d, Worker %d: acaplus time: %.6f seconds, nstrtl=%d, nstrtt=%d, ndl=%d, ndt=%d\n", use_gpu, id, t_end - t_start, nstrtl, nstrtt, ndl, ndt);
+
     st_lf->kt = kt; // store the actual rank of the partition
 
     if(kt > kparam){ 
@@ -343,169 +363,226 @@ void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat, int id){
 
     st_lf->a1 = (double *)realloc(st_lf->a1, kt * ndt * sizeof(double));
     st_lf->a2 = (double *)realloc(st_lf->a2, kt * ndl * sizeof(double)); //realloc memory so that it matches the rank corresponding to kt.
-
-  }
-  
-  else if(ltmtx == 2){
-    denseB++;
-    call_stats.total_dense_calls++;
+    
+    // low_rank++; // count the number of low-rank matrices filled
+  }else if(ltmtx == 2){
+    // printf("workload: DS=%d, ndl=%d, ndt=%d\n", ns, ndl, ndt);
     st_lf->a1 = (double *)malloc(sizeof(double) * ns);
-    // 记录本次执行是否真正在 GPU 上运行
-    // int actually_ran_on_gpu = 0;
 
-    #pragma acc data if(use_gpu) copyout(st_lf->a1[0:ns]) present(zgmid, f2n, bgmid) 
+    // fprintf(stderr, "[Debug] ns=%d, th_ds=%d\n", ns, th_ds);
+    if(ns >= th_ds && pthread_mutex_trylock(&myMutex) == 0) {
+      use_gpu = 1;
+      (*gpu_ds_cnt)++;
+      // fprintf(stderr, "workload: DS=%d, th_ds=%d, worker_id=%d, use_gpu=%d\n", ns, th_ds, id, use_gpu);
+    }else{
+      // use_gpu = 0;
+      (*cpu_ds_cnt)++;
+    }
+    // fprintf(stderr, "workload1: DS=%d, ns=%d, worker_id=%d, use_gpu=%d\n", ns, ns, id, use_gpu);
+
+    // double t_start = get_time();
+    #pragma acc data if(use_gpu) copy(st_lf->a1[0:ns])
     {
       double (*tempa1)[ndt] = (double(*)[ndt])st_lf->a1;
-      // check_gpu_usage();
-      
-      // int dev = acc_on_device(acc_device_nvidia);
-      #pragma acc parallel loop if(use_gpu) \
-          present(zgmid, f2n, bgmid, tempa1) reduction(+:actually_ran_on_gpu)  // 关键修复：使用 reduction
-      for(il = 0; il < ndl; il++) {
-        #ifdef _OPENACC
-        if (acc_on_device(acc_device_not_host)) {
-          actually_ran_on_gpu = 1;  
-        }
-        #endif
+      double xf[3], yf[3], zf[3];
+      double xp, yp, zp; 
+      // #pragma acc update device(zgmid[0:nofc][0:3], f2n[0:nofc][0:3], bgmid[0:nNode][0:3]) if(use_gpu && ns>=th_ds) // 确保数据在设备
+      #pragma acc parallel loop collapse(2) if(use_gpu) \
+                 present(zgmid[0:nofc][0:3], f2n[0:nofc][0:3], bgmid[0:nNode][0:3], st_lf->a1[0:ns])  \
+                 private(xf, yf, zf, xp, yp, zp)
+      for(int il = 0; il < ndl; il++) {
+          for(int it = 0; it < ndt; it++) {
+            int ill = il + nstrtl; 
+            int itt = it + nstrtt;
 
-        ill = il + nstrtl;  
-        #pragma acc loop 
-        for(it = 0; it < ndt; it++) {
-          itt = it + nstrtt;
-          int n[3];
-          double xf[3], yf[3], zf[3];
-          double xp = zgmid[ill][0];
-          double yp = zgmid[ill][1];
-          double zp = zgmid[ill][2];
-          
-          // Sequential loop to compute face integral values
-          #pragma acc loop seq
-          for (int i = 0; i < 3; i++) {
-              n[i] = f2n[itt][i];
-              xf[i] = bgmid[n[i]][0];
-              yf[i] = bgmid[n[i]][1];
-              zf[i] = bgmid[n[i]][2];
+            xp = zgmid[ill][0];
+            yp = zgmid[ill][1];
+            zp = zgmid[ill][2];
+
+            int ni0 = f2n[itt][0], ni1 = f2n[itt][1], ni2 = f2n[itt][2];
+            xf[0] = bgmid[ni0][0]; xf[1] = bgmid[ni1][0]; xf[2] = bgmid[ni2][0];
+            yf[0] = bgmid[ni0][1]; yf[1] = bgmid[ni1][1]; yf[2] = bgmid[ni2][1];
+            zf[0] = bgmid[ni0][2]; zf[1] = bgmid[ni1][2]; zf[2] = bgmid[ni2][2];
+
+            // Sequential loop to compute face integral values
+            // #pragma acc loop seq 
+            // double xf[3], yf[3], zf[3];
+            // for (int i = 0; i < 3; i++) {
+            //   int ni = f2n[itt][i];
+            //   xf[i] = bgmid[ni][0];
+            //   yf[i] = bgmid[ni][1];
+            //   zf[i] = bgmid[ni][2];
+            // }
+            // printf("ill=%d, itt=%d, xf(%f,%f,%f), yf=(%f,%f,%f), zf=(%f,%f,%f), xp=%f, yp=%f, zp=%f\n", ill, itt, xf[0], xf[1], xf[2], yf[0], yf[1], yf[2], zf[0], zf[1], zf[2], xp, yp, zp);
+            tempa1[il][it] = face_integral2(xf, yf, zf, xp, yp, zp);
           }
-          tempa1[il][it] = face_integral2(xf, yf, zf, xp, yp, zp);
-        }
-      }
-      // #pragma acc wait(1)
+        }         
     }
-    // 根据实际执行设备更新统计
-    if (actually_ran_on_gpu>0) {
-      call_stats.gpu_executions++;
-    } else {
-      call_stats.cpu_executions++;
-    }
-  }
-  // 记录执行时间
-  double elapsed = (double)(clock() - start_time) / CLOCKS_PER_SEC;
-  if (use_gpu) {
-      call_stats.gpu_time += elapsed;
-  } else {
-      call_stats.cpu_time += elapsed;
-  }
+    // double t_end = get_time();
+    // fprintf(stderr, "DS: use_gpu=%d, Worker %d: acaplus time: %.6f seconds, nstrtl=%d, nstrtt=%d, ndl=%d, ndt=%d\n", use_gpu, id, t_end - t_start, nstrtl, nstrtt, ndl, ndt);
 
-  if (use_gpu) {
-    // #pragma acc wait(1)
-    release_gpu_lock();
+    if(use_gpu){
+      pthread_mutex_unlock(&myMutex);
+    }
   }
+  // int workload = kparam * (ndl + ndt); // workload of the partition
+  // printf("workload: LR=%d, DS=%d, kparam=%d, ndl=%d, ndt=%d, ns=%d, worker_id=%d, use_gpu=%d\n", kparam * (ndl + ndt), ns, kparam, ndl, ndt, ns, id, use_gpu);
 }   
 
-#pragma acc routine seq
-void comp_row(double* zaa, double* zab, int ndl, int ndt, int k, int il, double* row, int nstrtl, int nstrtt, int* lrow_done){
+// // void comp_row(double* zaa, double* zab, int ndl, int ndt, int k, int il, double* row, int nstrtl, int nstrtt, int* lrow_done, double* zau){
+void comp_row(double* zaa, double* zab, int ndl, int ndt, int k, int il, double* row, int nstrtl, int nstrtt, int* lrow_done, double* zau, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3], int use_gpu, int id){
   int it;
-  for(it=0;it<ndt;it++){
+  double xf[3], yf[3], zf[3];
+  double xp, yp, zp;
+  if (use_gpu) {
+    #pragma acc update device(zab[0:ndt*kparam], zaa[0:ndl*kparam], row[0:ndt], lrow_done[0:ndt])
+  }
+  #pragma acc parallel if(use_gpu) present(zab[0:ndt*kparam], zaa[0:ndl*kparam], zgmid[0:nofc][0:3], f2n[0:nofc][0:3], bgmid[0:nNode][0:3], row[0:ndt], lrow_done[0:ndt])
+  {
+    #pragma acc loop private(xf, yf, zf) firstprivate(ndt, it, nstrtl, nstrtt) 
+    for(it=0;it<ndt;it++){
     if(lrow_done[it] == 0){
       int ill = il + nstrtl;
       int itt = it + nstrtt;
-      // row[it] = entry_ij(ill, itt);
       
       int n[3];
-      double xf[3], yf[3], zf[3];
-      double xp, yp, zp;
+      // double xf[3], yf[3], zf[3];
+      // double xp, yp, zp;
       xp = zgmid[ill][0];
       yp = zgmid[ill][1];
       zp = zgmid[ill][2];
-      // xp = 1.0;
-      // yp = 1.0;
-      // zp = 1.0;
       
       for(int i=0;i<3;i++){
         n[i] = f2n[itt][i];
       }
+      #pragma acc loop seq
       for(int i=0;i<3;i++){
         xf[i] = bgmid[n[i]][0];
         yf[i] = bgmid[n[i]][1];
         zf[i] = bgmid[n[i]][2];
-        // xf[il] = 1.0;
-        // yf[il] = 1.0;
-        // zf[il] = 1.0;
       }
       row[it] = face_integral2(xf, yf, zf, xp, yp, zp);
     }
   }
+}
 
   if(k == 0){
+    // #pragma acc update host(row[0:ndt], zab[0:ndt*kparam], zaa[0:ndl*kparam]) if(use_gpu)
+    #pragma acc update host(row[0:ndt]) if(use_gpu)
     return;
   }
 
-  adotsub_dsm(row, zab, zaa, il, ndt, k, ndt, ndl);
-
-  for(it=0;it<ndt;it++){
-    if(lrow_done[it] != 0){
+  adotsub_dsm(row, zab, zaa, il, ndt, k, ndt, ndl, zau);
+  #pragma acc parallel loop if(use_gpu) \
+                          present(lrow_done[0:ndt], row[0:ndt]) \
+                          firstprivate(ndt)
+  for(it = 0; it < ndt; it++) {
+    if (lrow_done[it] != 0) {
       row[it] = 0.0;
     }
   }
+  if (use_gpu) {
+    #pragma acc update host(row[0:ndt])
+  }
 }
 
-#pragma acc routine seq
-void comp_col(double* zaa, double* zab, int ndl, int ndt, int k, int it, double* col, int nstrtl, int nstrtt, int* lrow_done){
-  int il;
+void comp_col(double* zaa, double* zab, int ndl, int ndt, int k, int it, double* col, int nstrtl, int nstrtt, int* lrow_done, double* zau, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3], int use_gpu, int id){
+  double xf[3], yf[3], zf[3];
+  if (use_gpu) {
+    #pragma acc update device(zab[0:ndt*kparam], zaa[0:ndl*kparam], col[0:ndl], lrow_done[0:ndl])
+  }
+  // printf("worker_id=%d, use_gpu=%d, k=%d, ndl=%d, ndt=%d, nstrtl=%d, nstrtt=%d, lrow_done present: %d\n", id, use_gpu, k, ndl, ndt, nstrtl, nstrtt, acc_is_present(lrow_done, ndl * sizeof(int)));
+  #pragma acc parallel if(use_gpu) present(zab[0:ndt*kparam], zaa[0:ndl*kparam], zgmid[0:nofc][0:3], f2n[0:nofc][0:3], bgmid[0:nNode][0:3], col[0:ndl], lrow_done[0:ndl])
+  {
+    #pragma acc loop private(xf, yf, zf) firstprivate(ndl, it, nstrtl, nstrtt) 
+    
+    for (int il = 0; il < ndl; il++) {
+      if (lrow_done[il] == 0) {
+        int ill = il + nstrtl;
+        int itt = it + nstrtt;
 
-  for(il=0;il<ndl;il++){
-    if(lrow_done[il] == 0){
-      int ill = il + nstrtl;
-      int itt = it + nstrtt;
-      // col[il] = entry_ij(ill, itt);
+        double xp = zgmid[ill][0];
+        double yp = zgmid[ill][1];
+        double zp = zgmid[ill][2];
 
-      int n[3];
-      double xf[3], yf[3], zf[3];
-      double xp, yp, zp;
-      xp = zgmid[ill][0];
-      yp = zgmid[ill][1];
-      zp = zgmid[ill][2];
-      // xp = 1.0;
-      // yp = 1.0;
-      // zp = 1.0;
-      
-      for(int i=0;i<3;i++){
-        n[i] = f2n[itt][i];
+        #pragma acc loop seq 
+        for (int i = 0; i < 3; i++) {
+          int ni = f2n[itt][i];
+          xf[i] = bgmid[ni][0];
+          yf[i] = bgmid[ni][1];
+          zf[i] = bgmid[ni][2];
+        }
+        col[il] = face_integral2(xf, yf, zf, xp, yp, zp);
       }
-      for(int i=0;i<3;i++){
-        xf[i] = bgmid[n[i]][0];
-        yf[i] = bgmid[n[i]][1];
-        zf[i] = bgmid[n[i]][2];
-        // xf[il] = 1.0;
-        // yf[il] = 1.0;
-        // zf[il] = 1.0;
-      }
-      col[il] = face_integral2(xf, yf, zf, xp, yp, zp);
     }
   }
-
+    // int count = ndl < 5 ? ndl : 5;  // 防止越界访问
+    // #pragma acc parallel loop present(col[0:ndl]) firstprivate(count) if(use_gpu)
+    // for (int i = 0; i < count; i++) {
+    //     printf("worker_id=%d, use_gpu=%d, k=%d, ndl=%d, ndt=%d, nstrtl=%d, nstrtt=%d, col[%d] = %f\n", id, use_gpu, k, ndl, ndt, nstrtl, nstrtt, i, col[i]);
+    // }
+    
   if(k == 0){
+    // #pragma acc update host(col[0:ndl], zab[0:ndt*kparam], zaa[0:ndl*kparam]) if(use_gpu)
+    #pragma acc update host(col[0:ndl]) if(use_gpu)
     return;
   }
 
-  adotsub_dsm(col, zaa, zab, it, ndl, k, ndl, ndt);
-
+  adotsub_dsm(col, zaa, zab, it, ndl, k, ndl, ndt, zau); //#pragma acc routine seq void adotsub_dsm(..)
+  
+  int il;
+  #pragma acc parallel loop present(lrow_done[:ndl], col[0:ndl]) firstprivate(ndl,il) if(use_gpu)
   for(il=0;il<ndl;il++){
     if(lrow_done[il] != 0){
       col[il] = 0.0;
-    }
+    } 
+  }
+  if (use_gpu) {
+    #pragma acc update host(col[0:ndl])
   }
 }
+
+// #pragma acc routine seq
+// void comp_col(double* zaa, double* zab, int ndl, int ndt, int k, int it, double* col, int nstrtl, int nstrtt, int* lrow_done, double* zau, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3]){
+ 
+//   int il;
+
+//   for(il=0;il<ndl;il++){
+//     if(lrow_done[il] == 0){
+//       int ill = il + nstrtl;
+//       int itt = it + nstrtt;
+//       // col[il] = entry_ij(ill, itt);
+//       int n[3];
+//       double xf[3], yf[3], zf[3];
+//       double xp, yp, zp;
+//       xp = zgmid[ill][0];
+//       yp = zgmid[ill][1];
+//       zp = zgmid[ill][2];
+      
+//       for(int i=0;i<3;i++){
+//         n[i] = f2n[itt][i];
+//       }
+//       for(int i=0;i<3;i++){
+//         xf[i] = bgmid[n[i]][0];
+//         yf[i] = bgmid[n[i]][1];
+//         zf[i] = bgmid[n[i]][2];
+//       }
+//       col[il] = face_integral2(xf, yf, zf, xp, yp, zp);
+//     }
+//   }
+
+//   if(k == 0){
+//     return;
+//   }
+
+//   adotsub_dsm(col, zaa, zab, it, ndl, k, ndl, ndt, zau);
+
+//   for(il=0;il<ndl;il++){
+//     if(lrow_done[il] != 0){
+//       col[il] = 0.0;
+//     }
+//   }
+// }
 
 #pragma acc routine seq 
 int minabsvalloc_d(double* za, int nd){
@@ -542,9 +619,6 @@ double entry_ij(int i, int j){
   double xf[3], yf[3], zf[3];
   double xp, yp, zp;
 
-  // xp = 1.0;
-  // yp = 1.0;
-  // zp = 1.0;
   xp = zgmid[i][0];
   yp = zgmid[i][1];
   zp = zgmid[i][2];
@@ -556,9 +630,6 @@ double entry_ij(int i, int j){
     xf[il] = bgmid[n[il]][0];
     yf[il] = bgmid[n[il]][1];
     zf[il] = bgmid[n[il]][2];
-    // xf[il] = 1.0;
-    // yf[il] = 1.0;
-    // zf[il] = 1.0;
   }
 
   double result = face_integral2(xf, yf, zf, xp, yp, zp);
@@ -585,11 +656,6 @@ double face_integral2(double xs[], double ys[], double zs[], double x, double y,
     r[il] = sqrt( pow((xs[il] - x),2.0) + pow((ys[il] - y),2.0) + pow((zs[il] - z),2.0) );
   }
 
-  // u = (double*)malloc(sizeof(double)*3);
-  // v = (double*)malloc(sizeof(double)*3);
-  // w = (double*)malloc(sizeof(double)*3);
-
-
   u[0] = xs[1] - xs[0];
   u[1] = ys[1] - ys[0];
   u[2] = zs[1] - zs[0];
@@ -598,7 +664,6 @@ double face_integral2(double xs[], double ys[], double zs[], double x, double y,
   v[1] = ys[2] - ys[1];
   v[2] = zs[2] - zs[1];
   
-
   cross_product(u, v, w);
   
   double dw = sqrt( dot_product(w,w,3));
@@ -658,18 +723,21 @@ void cross_product(double* u, double* v, double* w){
   w[2] = u[0] * v[1] - u[1] * v[0];
 }
 
+// 用来逐步消去矩阵中的低秩近似部分，
+// 对每个 il ∈ [0, ndl-1]，进行矩阵 zaa 的第 it 行和 zab 的第 it 行第 im 列相乘求和，累加到 zau[il] 中。
 #pragma acc routine seq
-void adotsub_dsm(double* zr, double* zaa, double* zab, int it, int ndl, int ndt, int mdl, int mdt){
+void adotsub_dsm(double* zr, double* zaa, double* zab, int it, int ndl, int ndt, int mdl, int mdt, double* zau){
   int il;
-  double* zau = (double*)calloc(ndl,sizeof(double));
+  // double* zau = (double*)calloc(ndl,sizeof(double));
 
   adot_dsm(zau,zaa,zab,it,ndl,ndt,mdl,mdt);
   for(il=0;il<ndl;il++){
     zr[il] = zr[il] - zau[il];
   }
-  free(zau);
+  // free(zau);
 }
 
+// 构建一个近似基的向量
 #pragma acc routine seq
 void adot_dsm(double* zau, double* zaa, double* zab, int im, int ndl, int ndt, int mdl, int mdt){
   int it,il;
@@ -702,15 +770,14 @@ int max(int a, int b){
   return b;
 }
 
-#pragma acc routine seq
-int min(int a, int b){
-  if(a <= b){
-    return a;
-  }
-  return b;
-}
+// #pragma acc routine seq
+// int min(int a, int b){
+//   if(a <= b){
+//     return a;
+//   }
+//   return b;
+// }
 
-#pragma acc routine seq
 double dist_2cluster(int st_cltl,int st_cltt){
   double zs = 0.0;
   int id;
@@ -724,7 +791,6 @@ double dist_2cluster(int st_cltl,int st_cltt){
   return sqrt(zs);
 }
 
-#pragma acc routine seq
 int create_cluster(int ndpth,int nstrt,int nsize,int ndim,int nson){
   int st_clt;
   st_clt = countCT;
@@ -738,7 +804,6 @@ int create_cluster(int ndpth,int nstrt,int nsize,int ndim,int nson){
   return st_clt;
 }
 
-#pragma acc routine seq
 int create_ctree_ssgeom(int st_clt,   //the current node
 			      double (*zgmid)[3],     //coordination of objects
             int (*face2node)[3],
@@ -749,7 +814,8 @@ int create_ctree_ssgeom(int st_clt,   //the current node
 			      int md,            //number of data
 			      int ndim){
   int id,il,nson;
-  double minsz = 50.0;
+  // double minsz = 50.0;
+  double minsz = 100.0;
   double zcoef = 1.1;
   double zlmin[ndim],zlmax[ndim];
   ndpth = ndpth + 1;
@@ -879,4 +945,183 @@ int create_ctree_ssgeom(int st_clt,   //the current node
   return st_clt;
 }
 
-// to replace cblas_dnrm2
+
+void print_call_stats() {
+  printf("Dense matrix fill statistics:\n");
+  printf("Total dense calls: %d\n", call_stats.total_dense_calls);
+  printf("GPU executions: %d (%.1f%%)\n", 
+        call_stats.gpu_executions,
+        (float)call_stats.gpu_executions/call_stats.total_dense_calls*100);
+  printf("CPU executions: %d (%.1f%%)\n",
+        call_stats.cpu_executions,
+        (float)call_stats.cpu_executions/call_stats.total_dense_calls*100);
+  printf("Total GPU time: %.3f sec\n", call_stats.gpu_time);
+  printf("Total CPU time: %.3f sec\n", call_stats.cpu_time);
+  
+  // 计算未统计比例（应为0）
+  int unaccounted = call_stats.total_dense_calls - 
+                   (call_stats.gpu_executions + call_stats.cpu_executions);
+  if (unaccounted != 0) {
+      printf("Warning: %d calls not accounted (%.1f%%)\n",
+            unaccounted, (float)unaccounted/call_stats.total_dense_calls*100);
+  }
+}
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//   if (use_gpu) {
+//     #pragma acc update device(x[0:n]) 
+//   }
+//     double norm = 0.0;
+//     #pragma acc parallel loop if(use_gpu) \
+//                 present(x[0:n]) \
+//                 reduction(+:norm)
+//     for (int i = 0; i < n; i++) {
+//         norm += x[i * incx] * x[i * incx];
+//     }
+//     return sqrt(norm);
+// }
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//     // double norm = 0.0;
+//     return cblas_dnrm2(n, x, incx);
+// }
+
+// double simple_dnrm2_cublas(int n, const double *x_d, int incx, cublasHandle_t handle) {
+//     double result;
+//     cublasDnrm2(handle, n, x_d, incx, &result);
+//     return result;
+// }
+
+// #include <stdio.h>
+// #include <stdlib.h>
+// #include <math.h>
+// #include <cuda_runtime.h>
+// #include <cublas_v2.h>
+// #include <cblas.h>
+// // 计算2范数，GPU优先，失败回退CPU
+
+// void init_cublas() {
+//     if (g_cublas_handle == NULL) {
+//         cublasCreate(&g_cublas_handle);
+//     }
+// }
+
+// void cleanup_cublas() {
+//     if (g_cublas_handle != NULL) {
+//         cublasDestroy(g_cublas_handle);
+//         g_cublas_handle = NULL;
+//     }
+// }
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//   if (use_gpu && n > 5000) { 
+//     double result = 0.0;
+//     #pragma acc update device(x[0:n]) 
+//     double *d_x = (double*) acc_deviceptr(x);
+//     cublasDnrm2(g_cublas_handle, n, d_x, incx, &result);
+//     fprintf(stderr, "CUBLAS dnrm2 called: n=%d, incx=%d, result=%f\n", n, incx, result); 
+//     // test if the result is right
+//     if (fabs(result - cblas_dnrm2(n, x, incx)) > 1e-5) {
+//       fprintf(stderr, "CUBLAS dnrm2 returned error:g=%f vs c=%f\n", result, cblas_dnrm2(n, x, incx));
+//     }
+//     return result;
+//   }
+//   // CPU版本 fallback，调用 CPU BLAS（如OpenBLAS、MKL）dnrm2
+//   return cblas_dnrm2(n, x, incx);
+// }
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//   if (use_gpu) {
+//     #pragma acc update device(x[0:n]) 
+//   }
+//     double norm = 0.0;
+//     #pragma acc parallel loop if(use_gpu) \
+//                 present(x[0:n]) \
+//                 reduction(+:norm)
+//     for (int i = 0; i < n; i++) {
+//         norm += x[i * incx] * x[i * incx];
+//     }
+//     return sqrt(norm);
+// }
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//   return cblas_dnrm2(n, x, incx);
+// }
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//   if (use_gpu) { 
+//     const int test_loops = 1;
+//     double t_start = get_time();
+//     double norm = 0.0;
+//     #pragma acc parallel loop if(use_gpu) \
+//                 present(x[0:n]) \
+//                 reduction(+:norm)
+//     for (int i = 0; i < n; i++) {
+//         norm += x[i * incx] * x[i * incx];
+//     }
+    
+//     double t_gpu = get_time() - t_start;
+
+//     t_start = get_time();
+//     for (int i = 0; i < test_loops; i++) {
+//       cblas_dnrm2(n, x, incx);
+//     }
+//     double t_cpu = get_time() - t_start;
+
+//     fprintf(stderr,"n=%d: GPU=%fms CPU=%fms Speedup=%fx\n",
+//             n, t_gpu*1000, t_cpu*1000, t_cpu/t_gpu);
+
+//     // if(fabs(t_cpu - t_gpu) < 1e-5){
+//     //   fprintf(stderr,"close, n=%d, result=%f\n",n, result);
+//     // }
+
+//     if(t_cpu - t_gpu > 0){
+//       fprintf(stderr,"close, n=%d\n",n);
+//     }
+//     return sqrt(norm);
+//   }
+//   // CPU版本 fallback，调用 CPU BLAS（如OpenBLAS、MKL）dnrm2
+//   return cblas_dnrm2(n, x, incx);
+// }
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//   if (use_gpu) { 
+//     const int test_loops = 3;
+//     double t_start = get_time();
+//     double result = 0.0;
+//     for (int i = 0; i < test_loops; i++) {
+//       #pragma acc update device(x[0:n]) 
+//       double *d_x = (double*) acc_deviceptr(x);
+//       cublasDnrm2(g_cublas_handle, n, d_x, incx, &result);
+//     }
+//     double t_gpu = get_time() - t_start;
+
+//     t_start = get_time();
+//     for (int i = 0; i < test_loops; i++) {
+//       cblas_dnrm2(n, x, incx);
+//     }
+//     double t_cpu = get_time() - t_start;
+
+//     fprintf(stderr,"n=%d: GPU=%fms CPU=%fms Speedup=%fx\n",
+//             n, t_gpu*1000, t_cpu*1000, t_cpu/t_gpu);
+
+//     // if(fabs(t_cpu - t_gpu) < 1e-5){
+//     //   fprintf(stderr,"close, n=%d, result=%f\n",n, result);
+//     // }
+
+//     if(t_cpu - t_gpu > 0){
+//       fprintf(stderr,"close, n=%d, result=%f\n",n, result);
+//     }
+//     return result;
+//   }
+//   // CPU版本 fallback，调用 CPU BLAS（如OpenBLAS、MKL）dnrm2
+//   return cblas_dnrm2(n, x, incx);
+// }
+
+double get_time(){
+  struct timeval time;
+  if (gettimeofday(&time,NULL)){
+    return 0;
+  }
+  return (double)time.tv_sec + (double)time.tv_usec * .000001;
+}

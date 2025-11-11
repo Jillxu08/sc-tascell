@@ -25,9 +25,49 @@ ICC=icc
 # OPT=-O3 -std=c99 -mcmodel=medium -tp zen3 -acc=gpu -gpu=cc80 -Minfo=accel -lm bem_data/filling_wo_op.c bem_data/bem_file.c -o hmat_ct_reds
 
 # complier hmat_ct_reds.tcell with GPU
-GCC=nvc
-# OPT=-O3 -std=c99 -mcmodel=medium -lm bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds
-OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -g -gpu=cc80 -lm bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds
+# GCC=nvc
+# OPT=-O3 -std=c99 -mcmodel=medium -lm bem_data/filling_wo_op.c bem_data/bem_file.c -o hmat_ct_reds
+# GPU
+OPT=-O3 -std=c99 -mcmodel=medium -g -acc -gpu=cc80 -Minfo=accel -lm bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds -pthread
+# debug
+# OPT=-acc -gpu=cc80,lineinfo -g -O2 -Minfo=accel bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds
+# CPU
+# OPT=-O3 -std=c99 -mcmodel=medium -acc -ta=multicore -pthread -lm bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds
+
+
+# -ta=multicore：开启OpenACC在CPU多核上的并行加速（线程并行）。
+# -ta=host：纯主机串行执行，关闭并行（无GPU，无多线程）。
+# 千万别用 -ta=tesla 或其他GPU加速选项，那会启用GPU
+
+
+GCC = nvc
+CFLAGS = -I/usr/include/openblas
+LDFLAGS = -L/usr/lib64 \
+		  -lopenblas -lm -pthread
+
+OPTIMIZE = -O3 -fast -std=c99 -mcmodel=medium -g -tp zen3
+ACC_FLAGS = -acc -gpu=cc80,cuda12.2 -Minfo=accel
+
+OPT=$(OPTIMIZE) $(ACC_FLAGS) $(CFLAGS) $(LDFLAGS) \
+	bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds
+
+# 修正后的编译配置
+# GCC = nvc
+# CFLAGS =-I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/include \
+#          -I/usr/include/openblas
+# LDFLAGS = -L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/cuda/12.2/lib64 \
+#           -L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/math_libs/lib64 \
+#           -L/usr/lib64 \
+# 		  -lcublas -lcudart -lopenblas -lm -pthread
+
+# OPTIMIZE = -O3 -fast -std=c99 -mcmodel=medium -g -Mvect=simd -tp zen3
+# ACC_FLAGS = -acc -gpu=cc80,cuda12.2 -Minfo=accel
+
+# OPT=$(OPTIMIZE) $(ACC_FLAGS) $(CFLAGS) $(LDFLAGS) \
+# 	bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds
+
+
+
 
 # OPT=-O3 -std=c99 -mcmodel=medium -acc=gpu -gpu=cc80 -tp zen3 -Minfo=accel -lm bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds
 
