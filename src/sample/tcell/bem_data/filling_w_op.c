@@ -815,7 +815,7 @@ int create_ctree_ssgeom(int st_clt,   //the current node
 			      int ndim){
   int id,il,nson;
   // double minsz = 50.0;
-  double minsz = 100.0;
+  double minsz = 2000.0;
   double zcoef = 1.1;
   double zlmin[ndim],zlmax[ndim];
   ndpth = ndpth + 1;

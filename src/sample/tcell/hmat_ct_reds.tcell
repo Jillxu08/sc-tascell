@@ -32,11 +32,11 @@
 (extern-decl sv_socket int)
 
 ;; ; Sphere 10ts small data for debug
-(%defconstant INPUT_DEFAULT "bem_data/bem_bb_inputs/input_human_6x20.txt")  ;humans
+;; (%defconstant INPUT_DEFAULT "bem_data/bem_bb_inputs/input_human_6x20.txt")  ;humans
 ;; (%defconstant INPUT_DEFAULT "bem_data/bem_bb_inputs/input_1ms.txt")  ;large sphere
 ;; (%defconstant INPUT_DEFAULT "bem_data/bem_bb_inputs/input_10ts.txt") ;sphere
 ;; (%defconstant INPUT_DEFAULT "bem_data/input_10ts.txt_c_1_3_3_4")     ;spherecube
-;; (%defconstant INPUT_DEFAULT "bem_data/input_10ts.txt_p_1_4")         ;spherepyramid
+(%defconstant INPUT_DEFAULT "bem_data/input_10ts.txt_p_1_4")         ;spherepyramid
 ;; (%defconstant INPUT_DEFAULT "bem_data/input_216h.txt_c_1_5_10_1")    ;humans
 
 ;; (%defconstant INPUT_DEFAULT "bem_data/input_4ms.txt")
