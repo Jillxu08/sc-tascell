@@ -28,7 +28,9 @@ ICC=icc
 # GCC=nvc
 # OPT=-O3 -std=c99 -mcmodel=medium -lm bem_data/filling_wo_op.c bem_data/bem_file.c -o hmat_ct_reds
 # GPU
-OPT=-O3 -std=c99 -mcmodel=medium -g -acc -gpu=cc80 -Minfo=accel -lm bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds -pthread
+# OPT=-O3 -std=c99 -mcmodel=medium -g -acc -gpu=cc80 -Minfo=accel -lm bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds -pthread
+
+
 # debug
 # OPT=-acc -gpu=cc80,lineinfo -g -O2 -Minfo=accel bem_data/filling_w_op.c bem_data/bem_file.c -o hmat_ct_reds
 # CPU

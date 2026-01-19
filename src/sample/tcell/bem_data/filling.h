@@ -6,6 +6,12 @@
 // #include <mkl.h>
 // #include <cublas_v2.h>
 // extern cublasHandle_t handle;
+#ifdef __STDC__
+#include <stdint.h>
+#else
+// 手动定义 uint64_t
+typedef unsigned long long uint64_t;
+#endif
 
 extern struct cluster* resultCTlist;
 // extern int countCT;
@@ -42,15 +48,15 @@ struct cluster{
   long nnnd;
 };
 
-int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, int kmax, double eps, double znrmmat, double pACA_EPS, double* pa_ref, double* pb_ref, int* lrow_done, int* lcol_done, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3], int id, int use_gpu);
+int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, int kmax, double eps, double znrmmat, double pACA_EPS, double* pa_ref, double* pb_ref, int* lrow_done, int* lcol_done, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3], int id, int use_gpu, double *lr_cpu_time, double *lr_gpu_time);
 // int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, int kmax, double eps, double znrmmat, double pACA_EPS);
 void adotsub_dsm(double* zr, double* zaa, double* zu, int it, int ndl, int ndt, int mdl, int mdt, double* zau);
 void adot_dsm(double* zau, double* zaa, double* zu, int im, int ndl, int ndt, int mdl, int mdt);
 
 // void comp_col(double* zaa, double *zab, int ndl, int ndt, int k, int it, double* col, int nstrtl, int nstrtt, int* lrow_done, double* zau, double zgmid[][3]);
-void comp_col(double* zaa, double* zab, int ndl, int ndt, int k, int it, double* col, int nstrtl, int nstrtt, int* lrow_done, double* zau, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3], int use_gpu, int id);
+void comp_col(double* zaa, double* zab, int ndl, int ndt, int k, int it, double* col, int nstrtl, int nstrtt, int* lrow_done, double* zau, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3], int use_gpu, int id, double *lr_cpu_time, double *lr_gpu_time);
 // void comp_row(double* zaa, double* zab, int ndl, int ndt, int k, int il, double* row, int nstrtl, int nstrtt, int* lrow_done, double* zau);
-void comp_row(double* zaa, double* zab, int ndl, int ndt, int k, int il, double* row, int nstrtl, int nstrtt, int* lrow_done, double* zau, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3], int use_gpu, int id);
+void comp_row(double* zaa, double* zab, int ndl, int ndt, int k, int il, double* row, int nstrtl, int nstrtt, int* lrow_done, double* zau, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3], int use_gpu, int id, double *lr_cpu_time, double *lr_gpu_time);
 void cross_product(double* u, double* v, double* w);
 int create_ctree_ssgeom(int st_clt,double (*zgmid)[3],int (*face2node)[3],int ndpth,int ndscd,int nsrt,int nd,int md,int ndim);
 
@@ -59,7 +65,7 @@ double dot_product(double* v, double* u, int n);
 
 double entry_ij(int i, int j);
 
-void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat, int id, int *gpu_lr_cnt, int *cpu_lr_cnt, int *gpu_ds_cnt, int *cpu_ds_cnt);
+void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat, int id, int *gpu_lr_cnt, int *cpu_lr_cnt, int *gpu_ds_cnt, int *cpu_ds_cnt, uint64_t *gpu_lr_elem, uint64_t *cpu_lr_elem, uint64_t *gpu_ds_elem, uint64_t *cpu_ds_elem, uint64_t *pen_ds_gpu_subm, uint64_t *pen_ds_gpu_elem, uint64_t *pen_lr_gpu_subm, uint64_t *pen_lr_gpu_elem, double *ds_cpu_time, double *lr_cpu_time, double *ds_gpu_time, double *lr_gpu_time);
 // void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat, int id);
 double face_integral2(double xs[], double ys[], double zs[], double x, double y, double z);
 
@@ -79,4 +85,8 @@ void release_gpu_lock();
 void print_call_stats();
 // void init_cublas();
 // void cleanup_cublas();
-// double get_time();
+double get_time1();
+void get_time(struct timespec *ts);
+// double diff_time(struct timespec *start, struct timespec *end);
+
+double diff_time(const struct timespec *start, const struct timespec *end);

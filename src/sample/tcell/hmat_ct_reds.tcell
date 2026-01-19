@@ -19,6 +19,7 @@
 ;; (c-exp "#include <mkl.h>")
 (c-exp "#include \"bem_data/bem_file.h\"")
 (c-exp "#include \"bem_data/filling.h\"")
+(c-exp "#include <inttypes.h>")
 
 ;; (%defconstant PL 50)                ;;TN
 (%defconstant PB 100)              ;;TN of BCT
@@ -31,14 +32,15 @@
 
 (extern-decl sv_socket int)
 
-;; ; Sphere 10ts small data for debug
-;; (%defconstant INPUT_DEFAULT "bem_data/bem_bb_inputs/input_human_6x20.txt")  ;humans
-;; (%defconstant INPUT_DEFAULT "bem_data/bem_bb_inputs/input_1ms.txt")  ;large sphere
-;; (%defconstant INPUT_DEFAULT "bem_data/bem_bb_inputs/input_10ts.txt") ;sphere
+;; Sphere 10ts small data for debug
+;; (%defconstant INPUT_DEFAULT "bem_data/input_human_6x20.txt")  ;humans
+;; (%defconstant INPUT_DEFAULT "bem_data/input_1ms.txt")  ;large sphere
+;; (%defconstant INPUT_DEFAULT "bem_data/input_10ts.txt") ;sphere
 ;; (%defconstant INPUT_DEFAULT "bem_data/input_10ts.txt_c_1_3_3_4")     ;spherecube
 (%defconstant INPUT_DEFAULT "bem_data/input_10ts.txt_p_1_4")         ;spherepyramid
-;; (%defconstant INPUT_DEFAULT "bem_data/input_216h.txt_c_1_5_10_1")    ;humans
 
+
+;; (%defconstant INPUT_DEFAULT "bem_data/input_216h.txt_c_1_5_10_1")    ;humans
 ;; (%defconstant INPUT_DEFAULT "bem_data/input_4ms.txt")
 ;; (%defconstant INPUT_DEFAULT "bem_data/bem_bb_inputs/input_1188kp25.txt")
 ;; (%defconstant INPUT_DEFAULT "bem_data/bem_bb_inputs/input_human_6x20.txt")
@@ -88,6 +90,19 @@
   (def cpu-lr-cnt int)
   (def gpu-ds-cnt int)
   (def cpu-ds-cnt int)
+  (def gpu-lr-elem uint64_t)
+  (def cpu-lr-elem uint64_t)
+  (def gpu-ds-elem uint64_t)
+  (def cpu-ds-elem uint64_t)
+
+  (def pen-ds-gpu-subm uint64_t)
+  (def pen-ds-gpu-elem uint64_t)
+  (def pen-lr-gpu-subm uint64_t)
+  (def pen-lr-gpu-elem uint64_t)
+  (def ds-cpu-time double)
+  (def lr-cpu-time double)
+  (def ds-gpu-time double)
+  (def lr-gpu-time double)
 )
 
 (def Wdata-list (array (ptr (struct worker-data)) NWORKER-MAX)) ; 结构体数组，存储每个worker的数据
@@ -105,6 +120,19 @@
   (= WDATA.cpu-lr-cnt 0)
   (= WDATA.gpu-ds-cnt 0)
   (= WDATA.cpu-ds-cnt 0)
+  (= WDATA.gpu-lr-elem 0)
+  (= WDATA.cpu-lr-elem 0)
+  (= WDATA.gpu-ds-elem 0)
+  (= WDATA.cpu-ds-elem 0)
+
+  (= WDATA.pen-ds-gpu-subm 0)
+  (= WDATA.pen-ds-gpu-elem 0)
+  (= WDATA.pen-lr-gpu-subm 0)
+  (= WDATA.pen-lr-gpu-elem 0)
+  (= WDATA.ds-cpu-time 0.0)
+  (= WDATA.lr-cpu-time 0.0)
+  (= WDATA.ds-gpu-time 0.0)
+  (= WDATA.lr-gpu-time 0.0)
 )
 
 (def (task create_leafmtx)
@@ -415,7 +443,7 @@
       (= (fref (aref WDATA.leafnode-list WDATA.nlf) ndt) ndt) ; c: leaf matrix size
       (= (fref (aref WDATA.leafnode-list WDATA.nlf) kt) 0) ; rank of matrix, unknow until the filling is done
       (= (fref (aref WDATA.leafnode-list WDATA.nlf) ltmtx) 1)
-      (csym::fill_sub_leafmtx (ptr (aref WDATA.leafnode-list WDATA.nlf)) 0.0 WORKER-ID (ptr WDATA.gpu-lr-cnt) (ptr WDATA.cpu-lr-cnt) (ptr WDATA.gpu-ds-cnt) (ptr WDATA.cpu-ds-cnt))
+      (csym::fill_sub_leafmtx (ptr (aref WDATA.leafnode-list WDATA.nlf)) 0.0 WORKER-ID (ptr WDATA.gpu-lr-cnt) (ptr WDATA.cpu-lr-cnt) (ptr WDATA.gpu-ds-cnt) (ptr WDATA.cpu-ds-cnt) (ptr WDATA.gpu-lr-elem) (ptr WDATA.cpu-lr-elem) (ptr WDATA.gpu-ds-elem) (ptr WDATA.cpu-ds-elem) (ptr WDATA.pen-ds-gpu-subm) (ptr WDATA.pen-ds-gpu-elem) (ptr WDATA.pen-lr-gpu-subm) (ptr WDATA.pen-lr-gpu-elem) (ptr WDATA.ds-cpu-time) (ptr WDATA.lr-cpu-time) (ptr WDATA.ds-gpu-time) (ptr WDATA.lr-gpu-time))
       (+= WDATA.elem-sum (* (+ ndl ndt) (fref (aref WDATA.leafnode-list WDATA.nlf) kt)))
       (= WDATA.nlf (+ WDATA.nlf 1))
       ;; (if (and (and (== nstrtl 0) (== nstrtt 2620)) (and (== ndl 2620) (== ndt 10400)))
@@ -431,7 +459,9 @@
           (= (fref (aref WDATA.leafnode-list WDATA.nlf) nstrtt) nstrtt)
           (= (fref (aref WDATA.leafnode-list WDATA.nlf) ndt) ndt)
           (= (fref (aref WDATA.leafnode-list WDATA.nlf) ltmtx) 2)
-          (csym::fill_sub_leafmtx (ptr (aref WDATA.leafnode-list WDATA.nlf)) 0.0 WORKER-ID (ptr WDATA.gpu-lr-cnt) (ptr WDATA.cpu-lr-cnt) (ptr WDATA.gpu-ds-cnt) (ptr WDATA.cpu-ds-cnt))
+          (csym::fill_sub_leafmtx (ptr (aref WDATA.leafnode-list WDATA.nlf)) 0.0 WORKER-ID (ptr WDATA.gpu-lr-cnt) (ptr WDATA.cpu-lr-cnt) (ptr WDATA.gpu-ds-cnt) (ptr WDATA.cpu-ds-cnt) (ptr WDATA.gpu-lr-elem) (ptr WDATA.cpu-lr-elem) (ptr WDATA.gpu-ds-elem) (ptr WDATA.cpu-ds-elem) (ptr WDATA.pen-ds-gpu-subm) (ptr WDATA.pen-ds-gpu-elem) (ptr WDATA.pen-lr-gpu-subm) (ptr WDATA.pen-lr-gpu-elem) (ptr WDATA.ds-cpu-time) (ptr WDATA.lr-cpu-time) (ptr WDATA.ds-gpu-time) (ptr WDATA.lr-gpu-time))
+          ;; (+= WDATA.elem-sum (* ndl ndt))
+          ;; (= WDATA.nlf (+ WDATA.nlf 1)))
           ;; (+= WDATA.elem-sum (* (+ ndl ndt) (fref (aref WDATA.leafnode-list WDATA.nlf) kt)))
           ;; (= WDATA.nlf (+ WDATA.nlf 1))
           (+= WDATA.elem-sum (* ndl ndt))
@@ -522,7 +552,7 @@
     (def i int)
     ;; (def j int)
     (def nlf-sum int 0)
-    (def memory_sum int 0)
+    (def memory_sum uint64_t 0)
     (for ((= i 0) (< i num-thrs) (inc i))
       (def nlf-i int (fref (aref Wdata-list i) -> nlf))
       (if (> nlf-i BCTN)
@@ -537,29 +567,303 @@
     (csym::fprintf stderr "elem-sum=%ld nlf-sum= %d~%" memory_sum nlf-sum)
 )
 
+;; (def (csym::Matrix_cnt) (fn void void)
+;;   (def i int)
+;;   (def lr-cpu-sum int 0)
+;;   (def lr-gpu-sum int 0)
+;;   (def ds-cpu-sum int 0)
+;;   (def ds-gpu-sum int 0)
+
+;;   (def lr-cpu-elem-sum uint64_t 0)
+;;   (def lr-gpu-elem-sum uint64_t 0)
+;;   (def ds-cpu-elem-sum uint64_t 0)
+;;   (def ds-gpu-elem-sum uint64_t 0) 
+
+;;   (def pen-ds-gpu-subm-sum uint64_t 0)
+;;   (def pen-ds-gpu-elem-sum uint64_t 0)
+;;   (def pen-lr-gpu-subm-sum uint64_t 0)
+;;   (def pen-lr-gpu-elem-sum uint64_t 0)
+;;   (def ds-cpu-total-time double 0.0)
+;;   (def lr-cpu-total-time double 0.0)
+
+;;   (for ((= i 0) (< i num-thrs) (inc i))
+;;     (def lr-cpu-sum-i int (fref (aref Wdata-list i) -> cpu-lr-cnt)) 
+;;     (def lr-gpu-sum-i int (fref (aref Wdata-list i) -> gpu-lr-cnt))
+;;     (def ds-cpu-sum-i int (fref (aref Wdata-list i) -> cpu-ds-cnt))
+;;     (def ds-gpu-sum-i int (fref (aref Wdata-list i) -> gpu-ds-cnt))
+
+;;     (+= lr-cpu-sum lr-cpu-sum-i)
+;;     (+= lr-gpu-sum lr-gpu-sum-i)
+;;     (+= ds-cpu-sum ds-cpu-sum-i)
+;;     (+= ds-gpu-sum ds-gpu-sum-i)
+    
+;;     (def lr-cpu-elem-sum-i uint64_t (fref (aref Wdata-list i) -> cpu-lr-elem)) 
+;;     (def lr-gpu-elem-sum-i uint64_t (fref (aref Wdata-list i) -> gpu-lr-elem)) 
+;;     (def ds-cpu-elem-sum-i uint64_t (fref (aref Wdata-list i) -> cpu-ds-elem)) 
+;;     (def ds-gpu-elem-sum-i uint64_t (fref (aref Wdata-list i) -> gpu-ds-elem))   
+
+;;     (+= lr-cpu-elem-sum (fref (aref Wdata-list i) -> cpu-lr-elem))
+;;     (+= lr-gpu-elem-sum (fref (aref Wdata-list i) -> gpu-lr-elem))
+;;     (+= ds-cpu-elem-sum (fref (aref Wdata-list i) -> cpu-ds-elem))
+;;     (+= ds-gpu-elem-sum (fref (aref Wdata-list i) -> gpu-ds-elem)) 
+
+
+;;     (+= pen-ds-gpu-subm-sum (fref (aref Wdata-list i) -> pen-ds-gpu-subm))
+;;     (+= pen-ds-gpu-elem-sum (fref (aref Wdata-list i) -> pen-ds-gpu-elem))
+;;     (+= pen-lr-gpu-subm-sum (fref (aref Wdata-list i) -> pen-lr-gpu-subm))
+;;     (+= pen-lr-gpu-elem-sum (fref (aref Wdata-list i) -> pen-lr-gpu-elem))
+
+;;     (+= ds-cpu-total-time (fref (aref Wdata-list i) -> ds-cpu-time))
+;;     (+= lr-cpu-total-time (fref (aref Wdata-list i) -> lr-cpu-time)) 
+;;   )
+
+;;   (csym::fprintf stderr "lr-cpu-sum=%d lr-gpu-sum= %d~%" lr-cpu-sum lr-gpu-sum)
+;;   (csym::fprintf stderr "ds-cpu-sum=%d ds-gpu-sum= %d~%" ds-cpu-sum ds-gpu-sum)
+;;   (csym::fprintf stderr "cpu-sum=%d gpu-sum= %d~%" (+ lr-cpu-sum ds-cpu-sum) (+ lr-gpu-sum ds-gpu-sum))
+;;   (csym::fprintf stderr "low-rank-sum=%d dense-sum= %d~%" (+ lr-cpu-sum lr-gpu-sum) (+ ds-cpu-sum ds-gpu-sum))
+
+;;   (csym::fprintf stderr "lr-cpu-elem-sum=%d lr-gpu-elem-sum= %d~%" lr-cpu-elem-sum lr-gpu-elem-sum)
+;;   (csym::fprintf stderr "ds-cpu-elem-sum=%d ds-gpu-elem-sum= %d~%" ds-cpu-elem-sum ds-gpu-elem-sum)
+;;   (csym::fprintf stderr "cpu-elem-sum=%d gpu-elem-sum= %d~%" (+ lr-cpu-elem-sum ds-cpu-elem-sum) (+ lr-gpu-elem-sum ds-gpu-elem-sum))
+
+;;   (csym::fprintf stderr "low-rank-elem-sum=%d dense-elem-sum= %d~%" (+ lr-cpu-elem-sum lr-gpu-elem-sum) (+ ds-cpu-elem-sum ds-gpu-elem-sum))
+;;   (csym::fprintf stderr "pen-ds-gpu-subm-sum=%d pen-ds-gpu-elem-sum= %d~%" pen-ds-gpu-subm-sum pen-ds-gpu-elem-sum)
+;;   (csym::fprintf stderr "pen-lr-gpu-subm-sum=%d pen-lr-gpu-elem-sum= %d~%" pen-lr-gpu-subm-sum pen-lr-gpu-elem-sum)
+;;   (csym::fprintf stderr "ds-cpu-total-time=%.10lf lr-cpu-total-time= %.10lf~%" ds-cpu-total-time lr-cpu-total-time)
+;; )
+
+;; (def (csym::Matrix_cnt) (fn void void)
+;;   (def i int)
+
+;;   (def lr-cpu-sum uint64_t 0)
+;;   (def lr-gpu-sum uint64_t 0)
+;;   (def ds-cpu-sum uint64_t 0)
+;;   (def ds-gpu-sum uint64_t 0)
+
+;;   (def lr-cpu-elem-sum uint64_t 0)
+;;   (def lr-gpu-elem-sum uint64_t 0)
+;;   (def ds-cpu-elem-sum uint64_t 0)
+;;   (def ds-gpu-elem-sum uint64_t 0)
+
+;;   (def pen-ds-gpu-subm-sum uint64_t 0)
+;;   (def pen-ds-gpu-elem-sum uint64_t 0)
+;;   (def pen-lr-gpu-subm-sum uint64_t 0)
+;;   (def pen-lr-gpu-elem-sum uint64_t 0)
+
+;;   (def ds-cpu-total-time double 0.0)
+;;   (def lr-cpu-total-time double 0.0)
+
+;;   (for ((= i 0) (< i num-thrs) (inc i))
+
+;;     ;; ---- count ----
+;;     (+= lr-cpu-sum (fref (aref Wdata-list i) -> cpu-lr-cnt))
+;;     (+= lr-gpu-sum (fref (aref Wdata-list i) -> gpu-lr-cnt))
+;;     (+= ds-cpu-sum (fref (aref Wdata-list i) -> cpu-ds-cnt))
+;;     (+= ds-gpu-sum (fref (aref Wdata-list i) -> gpu-ds-cnt))
+
+;;     ;; ---- element count ----
+;;     (+= lr-cpu-elem-sum (fref (aref Wdata-list i) -> cpu-lr-elem))
+;;     (+= lr-gpu-elem-sum (fref (aref Wdata-list i) -> gpu-lr-elem))
+;;     (+= ds-cpu-elem-sum (fref (aref Wdata-list i) -> cpu-ds-elem))
+;;     (+= ds-gpu-elem-sum (fref (aref Wdata-list i) -> gpu-ds-elem))
+
+;;     ;; ---- GPU-penalty statistics ----
+;;     (+= pen-ds-gpu-subm-sum (fref (aref Wdata-list i) -> pen-ds-gpu-subm))
+;;     (+= pen-ds-gpu-elem-sum (fref (aref Wdata-list i) -> pen-ds-gpu-elem))
+;;     (+= pen-lr-gpu-subm-sum (fref (aref Wdata-list i) -> pen-lr-gpu-subm))
+;;     (+= pen-lr-gpu-elem-sum (fref (aref Wdata-list i) -> pen-lr-gpu-elem))
+
+;;     ;; ---- CPU time (accumulated) ----
+;;     (+= ds-cpu-total-time (fref (aref Wdata-list i) -> ds-cpu-time))
+;;     (+= lr-cpu-total-time (fref (aref Wdata-list i) -> lr-cpu-time))
+;;   )
+
+;;   (csym::fprintf stderr
+;;   "%llu,%llu,%llu,%llu,\
+;;   %llu,%llu,%llu,\
+;;   %llu,%llu,%llu,%llu,\
+;;   %llu,%llu,%llu,\
+;;   %llu,%llu,\
+;;   %llu,%llu,\
+;;   %llu,%llu,\
+;;   %.10lf,%.10lf,%.10lf~%"
+
+;;   ;; ---- submission ----
+;;   lr-cpu-sum
+;;   lr-gpu-sum
+;;   ds-cpu-sum
+;;   ds-gpu-sum
+
+;;   (+ lr-cpu-sum ds-cpu-sum)
+;;   (+ lr-gpu-sum ds-gpu-sum)
+;;   (+ lr-cpu-sum ds-cpu-sum lr-gpu-sum ds-gpu-sum)
+
+;;   ;; ---- element ----
+;;   lr-cpu-elem-sum
+;;   lr-gpu-elem-sum
+;;   ds-cpu-elem-sum
+;;   ds-gpu-elem-sum
+
+;;   (+ lr-cpu-elem-sum ds-cpu-elem-sum)
+;;   (+ lr-gpu-elem-sum ds-gpu-elem-sum)
+;;   (+ lr-cpu-elem-sum ds-cpu-elem-sum lr-gpu-elem-sum ds-gpu-elem-sum)
+
+;;   ;; ---- potential ----
+;;   pen-ds-gpu-subm-sum
+;;   pen-ds-gpu-elem-sum
+;;   pen-lr-gpu-subm-sum
+;;   pen-lr-gpu-elem-sum
+;;   (+ pen-ds-gpu-subm-sum pen-lr-gpu-subm-sum)
+;;   (+ pen-ds-gpu-elem-sum pen-lr-gpu-elem-sum)
+
+;;   ;; ---- time ----
+;;   ds-cpu-total-time
+;;   lr-cpu-total-time
+;;   (+ ds-cpu-total-time lr-cpu-total-time)
+;;   )
+
+
 (def (csym::Matrix_cnt) (fn void void)
   (def i int)
-  (def lr-cpu-sum int 0)
-  (def lr-gpu-sum int 0)
-  (def ds-cpu-sum int 0)
-  (def ds-gpu-sum int 0)
+
+  (def lr-cpu-sum uint64_t 0)
+  (def lr-gpu-sum uint64_t 0)
+  (def ds-cpu-sum uint64_t 0)
+  (def ds-gpu-sum uint64_t 0)
+
+  (def lr-cpu-elem-sum uint64_t 0)
+  (def lr-gpu-elem-sum uint64_t 0)
+  (def ds-cpu-elem-sum uint64_t 0)
+  (def ds-gpu-elem-sum uint64_t 0)
+
+  (def pen-ds-gpu-subm-sum uint64_t 0)
+  (def pen-ds-gpu-elem-sum uint64_t 0)
+  (def pen-lr-gpu-subm-sum uint64_t 0)
+  (def pen-lr-gpu-elem-sum uint64_t 0)
+
+  (def ds-cpu-total-time double 0.0)
+  (def lr-cpu-total-time double 0.0)
+  (def ds-gpu-total-time double 0.0)
+  (def lr-gpu-total-time double 0.0)
 
   (for ((= i 0) (< i num-thrs) (inc i))
-    (def lr-cpu-sum-i int (fref (aref Wdata-list i) -> cpu-lr-cnt)) 
-    (def lr-gpu-sum-i int (fref (aref Wdata-list i) -> gpu-lr-cnt))
-    (def ds-cpu-sum-i int (fref (aref Wdata-list i) -> cpu-ds-cnt))
-    (def ds-gpu-sum-i int (fref (aref Wdata-list i) -> gpu-ds-cnt))
+    (+= lr-cpu-sum (fref (aref Wdata-list i) -> cpu-lr-cnt))
+    (+= lr-gpu-sum (fref (aref Wdata-list i) -> gpu-lr-cnt))
+    (+= ds-cpu-sum (fref (aref Wdata-list i) -> cpu-ds-cnt))
+    (+= ds-gpu-sum (fref (aref Wdata-list i) -> gpu-ds-cnt))
 
-    (+= lr-cpu-sum lr-cpu-sum-i)
-    (+= lr-gpu-sum lr-gpu-sum-i)
-    (+= ds-cpu-sum ds-cpu-sum-i)
-    (+= ds-gpu-sum ds-gpu-sum-i))
+    (+= lr-cpu-elem-sum (fref (aref Wdata-list i) -> cpu-lr-elem))
+    (+= lr-gpu-elem-sum (fref (aref Wdata-list i) -> gpu-lr-elem))
+    (+= ds-cpu-elem-sum (fref (aref Wdata-list i) -> cpu-ds-elem))
+    (+= ds-gpu-elem-sum (fref (aref Wdata-list i) -> gpu-ds-elem))
 
-  (csym::fprintf stderr "lr-cpu-sum=%d lr-gpu-sum= %d~%" lr-cpu-sum lr-gpu-sum)
-  (csym::fprintf stderr "ds-cpu-sum=%d ds-gpu-sum= %d~%" ds-cpu-sum ds-gpu-sum)
-  (csym::fprintf stderr "cpu-sum=%d gpu-sum= %d~%" (+ lr-cpu-sum ds-cpu-sum) (+ lr-gpu-sum ds-gpu-sum))
-  (csym::fprintf stderr "low-rank-sum=%d dense-sum= %d~%" (+ lr-cpu-sum lr-gpu-sum) (+ ds-cpu-sum ds-gpu-sum))
+    (+= pen-ds-gpu-subm-sum (fref (aref Wdata-list i) -> pen-ds-gpu-subm))
+    (+= pen-ds-gpu-elem-sum (fref (aref Wdata-list i) -> pen-ds-gpu-elem))
+    (+= pen-lr-gpu-subm-sum (fref (aref Wdata-list i) -> pen-lr-gpu-subm))
+    (+= pen-lr-gpu-elem-sum (fref (aref Wdata-list i) -> pen-lr-gpu-elem))
+
+    (+= ds-cpu-total-time (fref (aref Wdata-list i) -> ds-cpu-time))
+    (+= lr-cpu-total-time (fref (aref Wdata-list i) -> lr-cpu-time))
+    (+= ds-gpu-total-time (fref (aref Wdata-list i) -> ds-gpu-time))
+    (+= lr-gpu-total-time (fref (aref Wdata-list i) -> lr-gpu-time))
+
+    ;; (csym::fprintf stderr "ds-cpu-time-%d=%.10lf  ds-cpu-total-time=%.10lf~%" i (fref (aref Wdata-list i) -> ds-cpu-time) ds-cpu-total-time)
 )
+
+  ;; ---- print results ----
+  (csym::fprintf stderr
+    "lr-cpu-subm=%llu lr-gpu-subm=%llu lr-subm-sum=%llu~%"
+    lr-cpu-sum lr-gpu-sum (+ lr-cpu-sum lr-gpu-sum))
+
+  (csym::fprintf stderr
+    "ds-cpu-subm=%llu ds-gpu-subm=%llu ds-subm-sum=%llu~%"
+    ds-cpu-sum ds-gpu-sum (+ ds-cpu-sum ds-gpu-sum))
+
+  (csym::fprintf stderr
+    "cpu-subm-sum=%llu gpu-subm-sum=%llu subm-sum=%llu~%"
+    (+ lr-cpu-sum ds-cpu-sum)
+    (+ lr-gpu-sum ds-gpu-sum)
+    (+ lr-cpu-sum ds-cpu-sum lr-gpu-sum ds-gpu-sum))
+
+  (csym::fprintf stderr
+    "lr-cpu-elem=%llu lr-gpu-elem=%llu lr-elem-sum=%llu~%"
+    lr-cpu-elem-sum lr-gpu-elem-sum (+ lr-cpu-elem-sum lr-gpu-elem-sum))
+
+  (csym::fprintf stderr
+    "ds-cpu-elem=%llu ds-gpu-elem=%llu ds-elem-sum=%llu~%"
+    ds-cpu-elem-sum ds-gpu-elem-sum (+ ds-cpu-elem-sum ds-gpu-elem-sum))
+
+  (csym::fprintf stderr
+    "cpu-elem-sum=%llu gpu-elem-sum=%llu elem-sum=%llu~%"
+    (+ lr-cpu-elem-sum ds-cpu-elem-sum)
+    (+ lr-gpu-elem-sum ds-gpu-elem-sum)
+    (+ lr-cpu-elem-sum ds-cpu-elem-sum lr-gpu-elem-sum ds-gpu-elem-sum))
+
+  (csym::fprintf stderr
+    "pen-ds-gpu-subm=%llu pen-ds-gpu-elem=%llu~%"
+    pen-ds-gpu-subm-sum pen-ds-gpu-elem-sum)
+
+  (csym::fprintf stderr
+    "pen-lr-gpu-subm=%llu pen-lr-gpu-elem=%llu~%"
+    pen-lr-gpu-subm-sum pen-lr-gpu-elem-sum)
+
+  (csym::fprintf stderr
+    "pen-gpu-subm=%llu pen-gpu-elem=%llu~%"
+    (+ pen-ds-gpu-subm-sum pen-lr-gpu-subm-sum)
+    (+ pen-ds-gpu-elem-sum pen-lr-gpu-elem-sum))
+
+  (csym::fprintf stderr
+    "ds-cpu-total-time=%.10lf lr-cpu-total-time=%.10lf cpu-total-time=%.10lf~%"
+    ds-cpu-total-time lr-cpu-total-time (+ ds-cpu-total-time lr-cpu-total-time))
+  (csym::fprintf stderr
+    "ds-gpu-total-time=%.10lf lr-gpu-total-time=%.10lf gpu-total-time=%.10lf~%"
+    ds-gpu-total-time lr-gpu-total-time (+ ds-gpu-total-time lr-gpu-total-time))
+)
+
+
+  ;; ;; ---- print results ----
+  ;; (csym::fprintf stderr "lr-cpu-subm=%" PRIu64 " lr-gpu-subm=%" PRIu64 "  lr-subm-sum=%" PRIu64 "~%"
+  ;;                lr-cpu-sum lr-gpu-sum (+ lr-cpu-sum lr-gpu-sum))
+
+  ;; (csym::fprintf stderr "ds-cpu-subm=%" PRIu64 " ds-gpu-subm=%" PRIu64 "  ds-subm-sum=%" PRIu64 "~%"
+  ;;                ds-cpu-sum ds-gpu-sum (+ ds-cpu-sum ds-gpu-sum))
+
+  ;; (csym::fprintf stderr "cpu-subm-sum=%" PRIu64 " gpu-subm-sum=%" PRIu64 " subm-sum=%" PRIu64 "~%"
+  ;;                (+ lr-cpu-sum ds-cpu-sum)
+  ;;                (+ lr-gpu-sum ds-gpu-sum)
+  ;;                (+ lr-cpu-sum ds-cpu-sum lr-gpu-sum ds-gpu-sum))
+
+  ;; (csym::fprintf stderr
+  ;;   "lr-cpu-elem=%" PRIu64 " lr-gpu-elem=%" PRIu64 " lr-elem-sum=%" PRIu64 "~%"
+  ;;   lr-cpu-elem-sum lr-gpu-elem-sum (+ lr-cpu-elem-sum lr-gpu-elem-sum))
+
+  ;; (csym::fprintf stderr
+  ;;   "ds-cpu-elem=%" PRIu64 " ds-gpu-elem=%" PRIu64 " ds-elem-sum=%" PRIu64 "~%"
+  ;;   ds-cpu-elem-sum ds-gpu-elem-sum (+ ds-cpu-elem-sum ds-gpu-elem-sum))
+
+  ;; (csym::fprintf stderr
+  ;;   "cpu-elem-sum=%" PRIu64 " gpu-elem-sum=%" PRIu64 " elem-sum=%" PRIu64 "~%"
+  ;;   (+ lr-cpu-elem-sum ds-cpu-elem-sum)
+  ;;   (+ lr-gpu-elem-sum ds-gpu-elem-sum)
+  ;;   (+ lr-cpu-elem-sum ds-cpu-elem-sum lr-gpu-elem-sum ds-gpu-elem-sum))
+
+  ;; (csym::fprintf stderr
+  ;;   "pen-ds-gpu-subm=%" PRIu64 " pen-ds-gpu-elem=%" PRIu64 "~%"
+  ;;   pen-ds-gpu-subm-sum pen-ds-gpu-elem-sum)
+
+  ;; (csym::fprintf stderr
+  ;;   "pen-lr-gpu-subm=%" PRIu64 " pen-lr-gpu-elem=%" PRIu64 "~%"
+  ;;   pen-lr-gpu-subm-sum pen-lr-gpu-elem-sum)
+
+  ;; (csym::fprintf stderr
+  ;;   "pen-gpu-subm=%" PRIu64 " pen-gpu-elem=%" PRIu64 "~%"
+  ;;   (+ pen-ds-gpu-subm-sum pen-lr-gpu-subm-sum) (+ pen-ds-gpu-elem-sum pen-lr-gpu-elem-sum)
+  ;; )
+
+  ;; (csym::fprintf stderr
+  ;;   "ds-cpu-total-time=%.10lf lr-cpu-total-time=%.10lf  cpu-total-time=%.10lf~%"
+  ;;   ds-cpu-total-time lr-cpu-total-time (+ ds-cpu-total-time lr-cpu-total-time))
+;; )
 
 (def (csym::load_data) (fn void void)
   (decl fname (ptr char))
