@@ -1,3 +1,6 @@
+;; Multi process + Multi GPUs/ per process
+;; Tascell with MPI version.
+
 (%ifndef* NF-TYPE
   (%defconstant NF-TYPE GCC)) ; one of (GCC LW-SC CL-SC XCC XCCCL) 
 (%include "rule/tcell-setrule.sh")
@@ -11,25 +14,37 @@
 (c-exp "#include <sys/time.h>")
 (c-exp "#include <unistd.h>")
 (c-exp "#include <stdatomic.h>")
-(c-exp "#include <mkl.h>")
-(c-exp "#include \"../data/bem_file.h\"")
-(c-exp "#include \"../data/filling.h\"")
+(c-exp "#include <cblas.h>")
+(c-exp "#include \"bem_data/bem_file.h\"")
+(c-exp "#include \"bem_data/filling.h\"")
+(c-exp "#include <inttypes.h>")
+;; (c-exp "#include <mkl.h>")
+;; (c-exp "#include \"../data/bem_file.h\"")
+;; (c-exp "#include \"../data/filling.h\"")
 
-(%defconstant PL 50)                ;;TN
-(%defconstant PB 10)              ;;TN of BCT
+;; (%defconstant PL 50)              ;;TN of CT
+;; (%defconstant ND 2)
+(%defconstant PB 100)              ;;TN of BCT for work-stealing; ndl and ndt > PB will be Spawned
 (%defconstant Check-interval 1)
-(%defconstant LN 220000)
-(%defconstant ND 2)
-(%defconstant BCTN 2500000)
+;; (%defconstant LN 220000)          ;; max number nodes of CT
+;; (%defconstant BCTN 2500000)   ;; max leaf nodes of BCT on each compute node
+(%defconstant LN 150000) ;;  聚类树节点
+(%defconstant BCTN 500000) ;; 叶节点列表
 
 (%defconstant TCELL-CHECK-REQ 1)
 
 (extern-decl sv_socket int)
 
+(%defconstant INPUT_DEFAULT "H-div/data/input_human_6x20.txt")  ;humans
+;; (%defconstant INPUT_DEFAULT "H-div/data/input_1ms.txt")  ;large sphere
+;; (%defconstant INPUT_DEFAULT "H-div/data/input_10ts.txt_c_1_3_3_4")     ;spherecube
+;; (%defconstant INPUT_DEFAULT "H-div/data/input_10ts.txt_p_1_4")         ;spherepyramid
+
 ;; ; Sphere 10ts small data for debug
 ;; (%defconstant INPUT_DEFAULT "../bem_data/input_10ts.txt")
 ;; ; Sphere 100ts
-(%defconstant INPUT_DEFAULT "../bem_data/input_100ts.txt")
+;; (%defconstant INPUT_DEFAULT "H-div/data/input_1ts.txt")
+;; (%defconstant INPUT_DEFAULT "H-div/data/input_1ms.txt")
 ;; ; SphereCube 10ts_c30_3_3_4
 ;; (%defconstant INPUT_DEFAULT "../bem_data/input_10ts_c30_3_3_4.txt")
 ;; ; SpherePyramid 10ts_p30_4
@@ -40,6 +55,7 @@
 ;; (%defconstant INPUT_DEFAULT "../bem_data/input_84tp7_30_2p.txt")
 
 (%defconstant NWORKER-MAX 576)
+;; (%defconstant NWORKER-MAX 260)
 (extern-decl num-thrs unsigned-int)
 
 ;; *********define cluster************
@@ -59,17 +75,37 @@
 
 (deftype leafmtxp (struct leafmtxp))
 (def (struct leafmtxp)
-  (decl nlf int)
-  (decl nlfkt int))
+  (decl nlf uint64_t)
+  ;; (decl nlfkt int)
+  )
 
 (def worker-data
   (def n int)
   (def leafnode-list (ptr leafmtx))
   (def lnmtx (array int 3))
-  (def nlf int)
-  (def elem-sum int)
+  (def nlf uint64_t)
+  (def elem-sum uint64_t)
   (def cas-start int)
-  (def cas-counter int))
+  (def cas-counter int)
+
+  (def gpu-lr-cnt int)
+  (def cpu-lr-cnt int)
+  (def gpu-ds-cnt int)
+  (def cpu-ds-cnt int)
+  (def gpu-lr-elem uint64_t)
+  (def cpu-lr-elem uint64_t)
+  (def gpu-ds-elem uint64_t)
+  (def cpu-ds-elem uint64_t)
+
+  (def pen-ds-gpu-subm uint64_t)
+  (def pen-ds-gpu-elem uint64_t)
+  (def pen-lr-gpu-subm uint64_t)
+  (def pen-lr-gpu-elem uint64_t)
+  (def ds-cpu-time double)
+  (def lr-cpu-time double)
+  (def ds-gpu-time double)
+  (def lr-gpu-time double)
+)
 
 (def Wdata-list (array (ptr (struct worker-data)) NWORKER-MAX))
 
@@ -82,6 +118,24 @@
   (= (aref WDATA.lnmtx 2) 0)
   (= WDATA.nlf 0)
   (= WDATA.elem-sum 0)
+
+  (= WDATA.gpu-lr-cnt 0)
+  (= WDATA.cpu-lr-cnt 0)
+  (= WDATA.gpu-ds-cnt 0)
+  (= WDATA.cpu-ds-cnt 0)
+  (= WDATA.gpu-lr-elem 0)
+  (= WDATA.cpu-lr-elem 0)
+  (= WDATA.gpu-ds-elem 0)
+  (= WDATA.cpu-ds-elem 0)
+
+  (= WDATA.pen-ds-gpu-subm 0)
+  (= WDATA.pen-ds-gpu-elem 0)
+  (= WDATA.pen-lr-gpu-subm 0)
+  (= WDATA.pen-lr-gpu-elem 0)
+  (= WDATA.ds-cpu-time 0.0)
+  (= WDATA.lr-cpu-time 0.0)
+  (= WDATA.ds-gpu-time 0.0)
+  (= WDATA.lr-gpu-time 0.0)
 )
 
 (def (task create_leafmtx)
@@ -91,19 +145,36 @@
   (def i2 int :in))
 
 (def (task start-up)
-  (def r int))
+  (def r int)
+  (def th-ds int :in)
+  (def th-lr int :in)
+  ;; (def th-minsz int :in)
+  ;; (def num-gpus int :in)
+  )
 
 (def (task CTdist1)
   (def i1 int :in)
   (def i2 int :in))
 
-(def (task BCT_cnt_task))
+;; (def (task BCT_cnt_task))
+(def (task BCT_cnt_task)
+  (def wall-time double :in))
 (def (task-body BCT_cnt_task))
 (def (task-receiver BCT_cnt_task)
+  (csym::set_wall_clock_time this.wall-time)
   (csym::BCT_cnt)
-  ;; (csym::finalize-tcounter)
-	;; (csym::show-counters)
+  (csym::Matrix_cnt_global)
 )
+
+
+;; ========== 添加这个新 task ==========
+(def (task GPU_report_task))
+(def (task-body GPU_report_task))
+(def (task-receiver GPU_report_task)
+  (csym::print_gpu_usage_report)
+  (csym::cleanup_multi_gpu)
+)
+;; ===================================
 
 (def (task CT_cnt_task))
 (def (task-body CT_cnt_task))
@@ -111,24 +182,31 @@
   (csym::fprintf stderr "#CT_nodes:%d~%" (csym::checkCT 0))
 )
 
-(def (task data_load_task))
+(def (task data_load_task)
+  (def ds-val int :in)
+  (def lr-val int :in)
+  (def minsz-val int :in)
+  (def gpu-val int :in)
+  )
 (def (task-body data_load_task))
+;; receiver 中先设置阈值，再加载数据
 (def (task-receiver data_load_task)
+  (= th-ds this.ds-val)
+  (= th-lr this.lr-val)
+  ;; (= th-minsz this.minsz-val) 
+  ;; (= num-gpus this.gpu-val)
   (csym::load_data)
   (= countCT 0)
+  (csym::create-ctree-ssgeom 0 zgmid f2n 0 0 0 nofc nofc 3) 
 )
 
-(decl (start-up) (wfn int))
+(decl (start-up ds lr) (wfn int int int))
+;; (decl (start-up ds lr minsz gpu) (wfn int int int int int))
+;; (decl (start-up) (wfn int))
 (decl (csym::med3 nl nr nlr2)
     (fn int int int int))
 (decl (create_leafmtx stc-cltl st-cltt i1 i2)
     (wfn void int int int int ))
-;; (decl (csym::dist-2cluster st-cltl st-cltt)
-    ;; (fn double int int))
-(decl (csym::cal-bndbox-cog st-clt zgmid bls_min bls_max brs_min brs_max)
-    (fn void int (ptr (array double 3)) (ptr (array double 3)) (ptr (array double 3)) (ptr (array double 3)) (ptr (array double 3))))
-;; (decl (csym::create-cluster ndpth nstrt nsize nson)
-;;     (fn int int int int int))
 (decl (csym::free-st-clt st-clt)
     (fn void (ptr cluster)))
 ;; (decl (csym::create-ctree-ssgeom zgmid face2node ndpth nsrt nd)
@@ -140,18 +218,25 @@
 (decl (csym::BCT_cnt) (fn void void))
 (decl (csym::load_data) (fn void void))
 (decl (csym::checkCT root) (fn int int))
+(decl (csym::depthCT root) (fn int int)) ;;check depth of CT
+(decl (csym::get_gpu_acquire_attempts) (fn int void))
+(decl (csym::get_gpu_acquire_failures) (fn int void))
+(decl (csym::Matrix_cnt_global) (fn void void))
+;; (decl (csym::start_wall_clock) (fn void void))
+;; (decl (csym::stop_wall_clock) (fn void void))
+(decl (csym::set_wall_clock_time) (fn void double))
+;; 在文件开头添加函数声明
+(decl (csym::print_gpu_usage_report) (fn void void))
+(decl (csym::cleanup_multi_gpu) (fn void void))
 
 (decl ndim int 3)
-(def privateCTlist (ptr cluster))
+;; (def privateCTlist (ptr cluster))
 ;; (def resultCTlist (ptr cluster))
 ;; (def nlf long 650000)
 (def nofc int)
 (def nNode int)
 (def CTcounter int 0)
-
-;; (def zgmid (ptr (array double 3)))
-;; (def bgmid (ptr (array double 3)))
-;; (def f2n (ptr (array int 3)))
+;; (def outside-flag int 0)
 
 (def (task-body create_leafmtx)
   (create_leafmtx this.st-cltl this.st-cltt this.i1 this.i2))
@@ -159,82 +244,65 @@
 (def (task-body CTdist1)
   ;; (csym::create-ctree-ssgeom zgmid face2node 0 0 nofc)
   (csym::create-ctree-ssgeom 0 zgmid f2n 0 0 0 nofc nofc 3)
-  (= outside-flag 1)
+  ;; (= outside-flag 1)
   ;; (= resultCTlist privateCTlist)
 )
 
 (def (task-body start-up)
-  (= this.r (start-up)))
+  (= this.r (start-up this.th-ds this.th-lr)))
+  ;; (= this.r (start-up this.th-ds this.th-lr this.th-minsz this.num-gpus)))
 
-(def (start-up) (wfn int)
+
+;; (def (start-up) (wfn int)
+;; (def (start-up ds lr minsz gpu) (wfn int int int int int)
+(def (start-up ds lr) (wfn int int int)
   (csym::fprintf stderr "Input file: %s~%" INPUT_DEFAULT)
   (csym::fprintf stderr "#proc:%d ~%" num-procs)
+  (csym::fprintf stderr "th_ds:%d ~%" ds)
+  (csym::fprintf stderr "th_lr:%d ~%" lr)
+  ;; (csym::fprintf stderr "minsz:%d ~%" minsz)
+  ;; (csym::fprintf stderr "num_gpus:%d ~%" gpu)
   (decl start double)
   (decl end double)
   (decl spent double)
-
-  (tcell-broadcast data_load_task (:put) 
+  (= th-ds ds)
+  (= th-lr lr)
+  ;; (= th-minsz minsz)
+  ;; (= num-gpus gpu)
+  (tcell-broadcast data_load_task 
+    (:put (= this.ds-val th-ds) (= this.lr-val th-lr))
+    ;; rank 0 本地执行
     (csym::load_data)
     (= countCT 0)
+    (= start (csym::MPI_Wtime))
+    (csym::create-ctree-ssgeom 0 zgmid f2n 0 0 0 nofc nofc 3) 
+    (= end (csym::MPI_Wtime))
+    (= spent (- end start))
+    (csym::fprintf stderr "cluster tree time spent:%.10lf~%" spent)
   )
 
-  (def i int)
-  (= start (csym::MPI_Wtime))
-  (do-many for i from 0 to num-procs
-    ;; (csym::create-ctree-ssgeom zgmid face2node 0 0 nofc)
-    (csym::create-ctree-ssgeom 0 zgmid f2n 0 0 0 nofc nofc 3)
-    (= outside-flag 1)
-    ;; (= resultCTlist privateCTlist)
-    ;; (if (and (== my_rank 0))
-    ;;   (begin
-    ;;     (decl all int)
-    ;;     (= all (* (fref (aref resultCTlist 0) nnson) (fref (aref resultCTlist 0) nnson)))
-    ;;     ;; (csym::fprintf stderr "my_rank:%d, workerID:%d ~%" my_rank WORKER-ID)
-    ;;     (create_leafmtx 0 0 0 all zgmid node face2node)
-    ;;   )
-    ;; )
-    (csym::fprintf stderr "CT count:%d~%" CTcounter)
-		(handles CTdist1
-      (:spawn-from (- i 1))
-      (:node 2)
-			(:put from j1 to j2)
-			(:get)))
-  (= end (csym::MPI_Wtime))
-  (= spent (- end start))
-  (csym::fprintf stderr "cluster tree time spent:%.10lf~%" spent)
+  ;; (def i int)
+  ;; (= start (csym::MPI_Wtime))
+  ;; (do-many for i from 0 to num-procs
+  ;;   (csym::create-ctree-ssgeom 0 zgmid f2n 0 0 0 nofc nofc 3)
+  ;;   ;; (= outside-flag 1)
+  ;;   (csym::fprintf stderr "CT count:%d~%" CTcounter)
+	;; 	(handles CTdist1
+  ;;     (:spawn-from (- i 1))
+  ;;     (:node 2)
+	;; 		(:put from j1 to j2)
+	;; 		(:get)))
+  ;; (= end (csym::MPI_Wtime))
+  ;; (= spent (- end start))
+  ;; (csym::fprintf stderr "cluster tree time spent:%.10lf~%" spent)
+  
+  (def nCTn int)
+  (= nCTn (csym::checkCT 0))
+  (def depthCT int)
+  (= depthCT (csym::depthCT 0))
+  (csym::fprintf stderr "# cluster tree nodes:%d~%" nCTn)
+  (csym::fprintf stderr "cluster tree depth:%d~%" depthCT)
   (def il int)
-  ;; (csym::fprintf stderr "#CT=%d~%" countCT)
-  ;; (for ((= il 0) (< il nofc) (inc il))
-  ;;   (csym::fprintf stderr "#face:%d %f %f %f~%" 
-  ;;     il
-  ;;     (aref zgmid il 0)
-  ;;     (aref zgmid il 1)
-  ;;     (aref zgmid il 2)
-  ;;   )
-  ;; )
-  ;; (for ((= il 0) (< il nNode) (inc il))
-  ;;   (csym::fprintf stderr "#node:%d %f %f %f~%" 
-  ;;     il
-  ;;     (aref bgmid il 0)
-  ;;     (aref bgmid il 1)
-  ;;     (aref bgmid il 2)
-  ;;   )
-  ;; )
-  ;; (for ((= il 0) (< il nofc) (inc il))
-  ;;   (csym::fprintf stderr "#face2node:%d %d %d %d~%" 
-  ;;     il
-  ;;     (aref f2n il 0)
-  ;;     (aref f2n il 1)
-  ;;     (aref f2n il 2)
-  ;;   )
-  ;; )
-  ;; (for ((= il 0) (< il countCT) (inc il))
-  ;;   (csym::fprintf stderr "#CT:%d %f~%" 
-  ;;     il
-  ;;     (fref (aref resultCTlist il) zwdth)
-  ;;   )
-  ;; )
-
   (= start (csym::MPI_Wtime))
   (decl all int)
   (= all (* (fref (aref resultCTlist 0) nnson) (fref (aref resultCTlist 0) nnson)))
@@ -243,84 +311,24 @@
   (= spent (- end start))
   (csym::fprintf stderr "BCT time spent:%.10lf~%" spent)
   
-  (tcell-broadcast BCT_cnt_task (:put) 
+  ;; (tcell-broadcast BCT_cnt_task (:put) 
+  ;;   (csym::BCT_cnt)
+  ;;   ;; (csym::finalize-tcounter)
+	;;   ;; (csym::show-counters)
+  ;; )
+  (tcell-broadcast BCT_cnt_task 
+    (:put (= this.wall-time spent))
+    (csym::set_wall_clock_time spent)
     (csym::BCT_cnt)
-    ;; (csym::finalize-tcounter)
-	  ;; (csym::show-counters)
+    (csym::Matrix_cnt_global)
+  )
+
+  (tcell-broadcast GPU_report_task (:put)
+    (csym::print_gpu_usage_report)
+    (csym::cleanup_multi_gpu)
   )
 
   (return 0))
-
-(def (csym::cal-bndbox-cog st-clt zgmid bls_min bls_max brs_min brs_max)
-    (fn void int (ptr (array double 3)) (ptr (array double 3)) (ptr (array double 3)) (ptr (array double 3)) (ptr (array double 3)))
-  (def tempcluster (ptr cluster))
-  (= tempcluster (ptr (aref privateCTlist st-clt)))
-  (def id int)
-  (def il int)
-  (def zeps double 1.0e-5)
-  (if (> (fref (mref tempcluster) nnson) 0)
-    (begin
-      (for ((= id 0) (< id ndim) (inc id))
-        (= (aref (fref (mref tempcluster) bmin) id) (aref (mref bls_min) id))
-        (= (aref (fref (mref tempcluster) bmax) id) (aref (mref bls_max) id)))
-      (for ((= id 0) (< id ndim) (inc id))
-        (if (< (aref (mref brs_min) id) (aref (fref (mref tempcluster) bmin) id))
-          (begin
-            (= (aref (fref (mref tempcluster) bmin) id) (aref (mref brs_min) id))))
-        (if (< (aref (fref (mref tempcluster) bmax) id) (aref (mref brs_max) id))
-          (begin
-            (= (aref (fref (mref tempcluster) bmax) id) (aref (mref brs_max) id))))))
-    (begin
-      (for ((= id 0) (< id ndim) (inc id))
-        (= (aref (fref (mref tempcluster) bmin) id) (aref (aref zgmid 0) id))
-        (= (aref (fref (mref tempcluster) bmax) id) (aref (aref zgmid 0) id))
-        ()
-      )
-      (for ((= id 0) (< id ndim) (inc id))
-        (for ((= il 1) (< il (fref (mref tempcluster) nsize)) (inc il))
-          (if (< (aref (aref zgmid il) id) (aref (fref (mref tempcluster) bmin) id))
-            (begin
-              (= (aref (fref (mref tempcluster) bmin) id) (aref (aref zgmid il) id))))
-          (if (< (aref (fref (mref tempcluster) bmax) id) (aref (aref zgmid il) id))
-            (begin
-              (= (aref (fref (mref tempcluster) bmax) id) (aref (aref zgmid il) id))))))
-    )
-  )
-  (def zwdth double (* 
-                      (- (aref (fref (mref tempcluster) bmax) 0) 
-                        (aref (fref (mref tempcluster) bmin) 0)) 
-                      (- (aref (fref (mref tempcluster) bmax) 0)
-                        (aref (fref (mref tempcluster) bmin) 0))))
-  (for ((= id 1) (< id ndim) (inc id))
-    (= zwdth
-       (+ zwdth
-          (* (- (aref (fref (mref tempcluster) bmax) id)
-                (aref (fref (mref tempcluster) bmin) id))
-             (- (aref (fref (mref tempcluster) bmax) id)
-                (aref (fref (mref tempcluster) bmin) id))))))
-  (= zwdth (csym::sqrt zwdth))
-  (for ((= id 0) (< id ndim) (inc id))
-    (def bdiff double
-      (- (aref (fref (mref tempcluster) bmax) id) (aref (fref (mref tempcluster) bmin) id)))
-    (if (< bdiff (* zeps zwdth))
-        (begin
-          (= (aref (fref (mref tempcluster) bmax) id)
-             (+ (aref (fref (mref tempcluster) bmax) id)
-                (* 0.5 (- (* zeps zwdth) bdiff))))
-          (= (aref (fref (mref tempcluster) bmin) id)
-             (- (aref (fref (mref tempcluster) bmin) id)
-                (* 0.5 (- (* zeps zwdth) bdiff)))))))
-  (= zwdth
-     (* (- (aref (fref (mref tempcluster) bmax) 0) (aref (fref (mref tempcluster) bmin) 0))
-        (- (aref (fref (mref tempcluster) bmax) 0) (aref (fref (mref tempcluster) bmin) 0))))
-  (for ((= id 1) (< id ndim) (inc id))
-    (= zwdth
-      (+ zwdth
-        (* (- (aref (fref (mref tempcluster) bmax) id) (aref (fref (mref tempcluster) bmin) id))
-          (- (aref (fref (mref tempcluster) bmax) id)
-             (aref (fref (mref tempcluster) bmin) id))))))
-  (= (fref (mref tempcluster) zwdth) (csym::sqrt zwdth))
-)
 
 (def (csym::med3 nl nr nlr2) (fn int int int int)
   (decl med3 int)
@@ -340,7 +348,7 @@
   (return med3))
 
 (def (create_leafmtx st-cltl st-cltt i1 i2)
-    (wfn void int int int int)
+  (wfn void int int int int)
   (def ndl int (fref (aref resultCTlist st-cltl) nsize))
   (def ndt int (fref (aref resultCTlist st-cltt) nsize))
   (def nstrtl int (fref (aref resultCTlist st-cltl) nstrt))
@@ -362,7 +370,7 @@
       (= (fref (aref WDATA.leafnode-list WDATA.nlf) ndt) ndt)
       (= (fref (aref WDATA.leafnode-list WDATA.nlf) kt) 0)
       (= (fref (aref WDATA.leafnode-list WDATA.nlf) ltmtx) 1)
-      (csym::fill_sub_leafmtx (ptr (aref WDATA.leafnode-list WDATA.nlf)) 0.0)
+      (csym::fill_sub_leafmtx (ptr (aref WDATA.leafnode-list WDATA.nlf)) 0.0 WORKER-ID (ptr WDATA.gpu-lr-cnt) (ptr WDATA.cpu-lr-cnt) (ptr WDATA.gpu-ds-cnt) (ptr WDATA.cpu-ds-cnt) (ptr WDATA.gpu-lr-elem) (ptr WDATA.cpu-lr-elem) (ptr WDATA.gpu-ds-elem) (ptr WDATA.cpu-ds-elem) (ptr WDATA.pen-ds-gpu-subm) (ptr WDATA.pen-ds-gpu-elem) (ptr WDATA.pen-lr-gpu-subm) (ptr WDATA.pen-lr-gpu-elem) (ptr WDATA.ds-cpu-time) (ptr WDATA.lr-cpu-time) (ptr WDATA.ds-gpu-time) (ptr WDATA.lr-gpu-time))
       (+= WDATA.elem-sum (* (+ ndl ndt) (fref (aref WDATA.leafnode-list WDATA.nlf) kt)))
       (= WDATA.nlf (+ WDATA.nlf 1))
       ;; (if (and (and (== nstrtl 0) (== nstrtt 2620)) (and (== ndl 2620) (== ndt 10400)))
@@ -377,7 +385,7 @@
           (= (fref (aref WDATA.leafnode-list WDATA.nlf) nstrtt) nstrtt)
           (= (fref (aref WDATA.leafnode-list WDATA.nlf) ndt) ndt)
           (= (fref (aref WDATA.leafnode-list WDATA.nlf) ltmtx) 2)
-          (csym::fill_sub_leafmtx (ptr (aref WDATA.leafnode-list WDATA.nlf)) 0.0)
+          (csym::fill_sub_leafmtx (ptr (aref WDATA.leafnode-list WDATA.nlf)) 0.0 WORKER-ID (ptr WDATA.gpu-lr-cnt) (ptr WDATA.cpu-lr-cnt) (ptr WDATA.gpu-ds-cnt) (ptr WDATA.cpu-ds-cnt) (ptr WDATA.gpu-lr-elem) (ptr WDATA.cpu-lr-elem) (ptr WDATA.gpu-ds-elem) (ptr WDATA.cpu-ds-elem) (ptr WDATA.pen-ds-gpu-subm) (ptr WDATA.pen-ds-gpu-elem) (ptr WDATA.pen-lr-gpu-subm) (ptr WDATA.pen-lr-gpu-elem) (ptr WDATA.ds-cpu-time) (ptr WDATA.lr-cpu-time) (ptr WDATA.ds-gpu-time) (ptr WDATA.lr-gpu-time))
           (+= WDATA.elem-sum (* ndl ndt))
           (= WDATA.nlf (+ WDATA.nlf 1)))
         (begin
@@ -426,6 +434,23 @@
     (begin
       (return 1))))
 
+(def (csym::depthCT root) (fn int int)
+  (def temp (ptr cluster))
+  (= temp (ptr (aref resultCTlist root)))
+  (if (== (fref (mref temp) nnson) 2)
+    (begin
+      (def left int)
+      (def right int)
+      (= left (csym::depthCT (aref (fref (mref temp) offsets) 0)))
+      (= right (csym::depthCT (aref (fref (mref temp) offsets) 1)))
+      (if (> left right)
+        (return (+ left 1))
+        (return (+ right 1))
+      )
+      (return (+ (+ left right) 1)))
+    (begin
+      (return 1))))
+
 (def (csym::checkClusterTree f root) (fn void (ptr FILE) int)
   (def temp (ptr cluster))
   (= temp (ptr (aref resultCTlist root)))
@@ -448,10 +473,10 @@
   (begin
     (def i int)
     (def j int)
-    (def nlf-sum int 0)
-    (def memory_sum int 0)
+    (def nlf-sum uint64_t 0)
+    (def memory_sum uint64_t 0)
     (for ((= i 0) (< i num-thrs) (inc i))
-      (def nlf-i int (fref (aref Wdata-list i) -> nlf))
+      (def nlf-i uint64_t (fref (aref Wdata-list i) -> nlf))
       (if (> nlf-i BCTN)
         (begin
           (csym::fprintf stderr "nlf of counted by worker %d is larger than BCTN!~%" i)
@@ -460,9 +485,212 @@
       (+= memory_sum (fref (aref Wdata-list i) -> elem-sum))
       
     )
-    (csym::fprintf stderr "rank: %d, elem-sum=%d nlf-sum= %d~%" my-rank memory_sum nlf-sum)
+    (csym::fprintf stderr "rank: %d, elem-sum=%llu nlf-sum= %llu~%" my-rank memory_sum nlf-sum)
   )
 )
+
+;; ============================================================
+;; Matrix_cnt_global - 修改后完整版本
+;; 添加了 GPU acquire attempts/failures 统计
+;; ============================================================
+
+;; 首先在文件开头添加函数声明
+(decl (csym::get_gpu_acquire_attempts) (fn int void))
+(decl (csym::get_gpu_acquire_failures) (fn int void))
+
+;; 完整的 Matrix_cnt_global 函数
+(def (csym::Matrix_cnt_global) (fn void void)
+  (def i int)
+  (def my-rank-local int)
+  (def num-processes-local int)
+  
+  ;; 本地累加器 - 子矩阵数
+  (def local-lr-cpu uint64_t 0)
+  (def local-lr-gpu uint64_t 0)
+  (def local-ds-cpu uint64_t 0)
+  (def local-ds-gpu uint64_t 0)
+  
+  ;; 本地累加器 - 元素数
+  (def local-lr-cpu-elem uint64_t 0)
+  (def local-lr-gpu-elem uint64_t 0)
+  (def local-ds-cpu-elem uint64_t 0)
+  (def local-ds-gpu-elem uint64_t 0)
+  
+  ;; 本地累加器 - 时间
+  (def local-ds-cpu-time double 0.0)
+  (def local-lr-cpu-time double 0.0)
+  (def local-ds-gpu-time double 0.0)
+  (def local-lr-gpu-time double 0.0)
+  
+  ;; 新增：GPU获取统计
+  (def local-gpu-attempts int 0)
+  (def local-gpu-failures int 0)
+  
+  ;; 全局累加器 - 子矩阵数
+  (def global-lr-cpu uint64_t 0)
+  (def global-lr-gpu uint64_t 0)
+  (def global-ds-cpu uint64_t 0)
+  (def global-ds-gpu uint64_t 0)
+  
+  ;; 全局累加器 - 元素数
+  (def global-lr-cpu-elem uint64_t 0)
+  (def global-lr-gpu-elem uint64_t 0)
+  (def global-ds-cpu-elem uint64_t 0)
+  (def global-ds-gpu-elem uint64_t 0)
+  
+  ;; 全局累加器 - 时间
+  (def global-ds-cpu-time double 0.0)
+  (def global-lr-cpu-time double 0.0)
+  (def global-ds-gpu-time double 0.0)
+  (def global-lr-gpu-time double 0.0)
+  
+  ;; 新增：GPU获取统计 - 全局
+  (def global-gpu-attempts int 0)
+  (def global-gpu-failures int 0)
+  
+  ;; 获取 MPI 信息
+  (csym::MPI_Comm_rank csym::MPI_COMM_WORLD (ptr my-rank-local))
+  (csym::MPI_Comm_size csym::MPI_COMM_WORLD (ptr num-processes-local))
+  
+  ;; 收集本地统计 - 从各 Worker 汇总
+  (for ((= i 0) (< i num-thrs) (inc i))
+    (+= local-lr-cpu (fref (aref Wdata-list i) -> cpu-lr-cnt))
+    (+= local-lr-gpu (fref (aref Wdata-list i) -> gpu-lr-cnt))
+    (+= local-ds-cpu (fref (aref Wdata-list i) -> cpu-ds-cnt))
+    (+= local-ds-gpu (fref (aref Wdata-list i) -> gpu-ds-cnt))
+    
+    (+= local-lr-cpu-elem (fref (aref Wdata-list i) -> cpu-lr-elem))
+    (+= local-lr-gpu-elem (fref (aref Wdata-list i) -> gpu-lr-elem))
+    (+= local-ds-cpu-elem (fref (aref Wdata-list i) -> cpu-ds-elem))
+    (+= local-ds-gpu-elem (fref (aref Wdata-list i) -> gpu-ds-elem))
+    
+    (+= local-ds-cpu-time (fref (aref Wdata-list i) -> ds-cpu-time))
+    (+= local-lr-cpu-time (fref (aref Wdata-list i) -> lr-cpu-time))
+    (+= local-ds-gpu-time (fref (aref Wdata-list i) -> ds-gpu-time))
+    (+= local-lr-gpu-time (fref (aref Wdata-list i) -> lr-gpu-time)))
+  
+  ;; 新增：获取本进程的 GPU 获取统计
+  (= local-gpu-attempts (csym::get_gpu_acquire_attempts))
+  (= local-gpu-failures (csym::get_gpu_acquire_failures))
+  
+  ;; MPI Reduce 聚合（子矩阵数）
+  (csym::MPI_Reduce (ptr local-lr-cpu) (ptr global-lr-cpu) 1 
+                    csym::MPI_UNSIGNED_LONG_LONG csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  (csym::MPI_Reduce (ptr local-lr-gpu) (ptr global-lr-gpu) 1 
+                    csym::MPI_UNSIGNED_LONG_LONG csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  (csym::MPI_Reduce (ptr local-ds-cpu) (ptr global-ds-cpu) 1 
+                    csym::MPI_UNSIGNED_LONG_LONG csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  (csym::MPI_Reduce (ptr local-ds-gpu) (ptr global-ds-gpu) 1 
+                    csym::MPI_UNSIGNED_LONG_LONG csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  
+  ;; MPI Reduce 聚合（元素数）
+  (csym::MPI_Reduce (ptr local-lr-cpu-elem) (ptr global-lr-cpu-elem) 1 
+                    csym::MPI_UNSIGNED_LONG_LONG csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  (csym::MPI_Reduce (ptr local-lr-gpu-elem) (ptr global-lr-gpu-elem) 1 
+                    csym::MPI_UNSIGNED_LONG_LONG csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  (csym::MPI_Reduce (ptr local-ds-cpu-elem) (ptr global-ds-cpu-elem) 1 
+                    csym::MPI_UNSIGNED_LONG_LONG csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  (csym::MPI_Reduce (ptr local-ds-gpu-elem) (ptr global-ds-gpu-elem) 1 
+                    csym::MPI_UNSIGNED_LONG_LONG csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  
+  ;; MPI Reduce 聚合（时间）
+  (csym::MPI_Reduce (ptr local-ds-cpu-time) (ptr global-ds-cpu-time) 1 
+                    csym::MPI_DOUBLE csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  (csym::MPI_Reduce (ptr local-lr-cpu-time) (ptr global-lr-cpu-time) 1 
+                    csym::MPI_DOUBLE csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  (csym::MPI_Reduce (ptr local-ds-gpu-time) (ptr global-ds-gpu-time) 1 
+                    csym::MPI_DOUBLE csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  (csym::MPI_Reduce (ptr local-lr-gpu-time) (ptr global-lr-gpu-time) 1 
+                    csym::MPI_DOUBLE csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  
+  ;; 新增：MPI Reduce 聚合（GPU获取统计）
+  (csym::MPI_Reduce (ptr local-gpu-attempts) (ptr global-gpu-attempts) 1 
+                    csym::MPI_INT csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  (csym::MPI_Reduce (ptr local-gpu-failures) (ptr global-gpu-failures) 1 
+                    csym::MPI_INT csym::MPI_SUM 0 csym::MPI_COMM_WORLD)
+  
+  ;; 只让 rank 0 打印
+  (if (== my-rank-local 0)
+    (begin
+      ;; 计算 GPU 获取成功率
+      (def success-rate double 0.0)
+      (if (> global-gpu-attempts 0)
+        (= success-rate (* 100.0 (/ (cast double (- global-gpu-attempts global-gpu-failures)) 
+                                    (cast double global-gpu-attempts)))))
+      
+      (csym::fprintf stderr "~%")
+      (csym::fprintf stderr "================================================================~%")
+      (csym::fprintf stderr "  GLOBAL Matrix Statistics (All %d Processes)~%" num-processes-local)
+      (csym::fprintf stderr "================================================================~%")
+      
+      (csym::fprintf stderr "~%Low-Rank Matrices:~%")
+      (csym::fprintf stderr "  CPU: subm=%llu elem=%llu~%" global-lr-cpu global-lr-cpu-elem)
+      (csym::fprintf stderr "  GPU: subm=%llu elem=%llu~%" global-lr-gpu global-lr-gpu-elem)
+      (csym::fprintf stderr "  Total: subm=%llu elem=%llu~%"
+              (+ global-lr-cpu global-lr-gpu) 
+              (+ global-lr-cpu-elem global-lr-gpu-elem))
+      
+      (csym::fprintf stderr "~%Dense Matrices:~%")
+      (csym::fprintf stderr "  CPU: subm=%llu elem=%llu~%" global-ds-cpu global-ds-cpu-elem)
+      (csym::fprintf stderr "  GPU: subm=%llu elem=%llu~%" global-ds-gpu global-ds-gpu-elem)
+      (csym::fprintf stderr "  Total: subm=%llu elem=%llu~%"
+              (+ global-ds-cpu global-ds-gpu) 
+              (+ global-ds-cpu-elem global-ds-gpu-elem))
+      
+      (csym::fprintf stderr "~%Time (seconds):~%")
+      (csym::fprintf stderr "  CPU: dense=%.3f lowrank=%.3f total=%.3f~%"
+              global-ds-cpu-time global-lr-cpu-time 
+              (+ global-ds-cpu-time global-lr-cpu-time))
+      (csym::fprintf stderr "  GPU: dense=%.3f lowrank=%.3f total=%.3f~%"
+              global-ds-gpu-time global-lr-gpu-time 
+              (+ global-ds-gpu-time global-lr-gpu-time))
+      
+      ;; 新增：GPU获取统计输出
+      (csym::fprintf stderr "~%GPU Acquire Statistics:~%")
+      (csym::fprintf stderr "  Attempts: %d~%" global-gpu-attempts)
+      (csym::fprintf stderr "  Failures: %d (fell back to CPU)~%" global-gpu-failures)
+      (csym::fprintf stderr "  Success Rate: %.2f%%~%" success-rate)
+      
+      (csym::fprintf stderr "~%Grand Total:~%")
+      (csym::fprintf stderr "  Submatrices: %llu~%"
+              (+ global-lr-cpu global-lr-gpu global-ds-cpu global-ds-gpu))
+      (csym::fprintf stderr "  Elements: %llu~%"
+              (+ global-lr-cpu-elem global-lr-gpu-elem 
+                 global-ds-cpu-elem global-ds-gpu-elem))
+      
+      ;; 新增：计算并输出 GPU/CPU 任务比例
+      (def total-gpu-tasks uint64_t (+ global-lr-gpu global-ds-gpu))
+      (def total-cpu-tasks uint64_t (+ global-lr-cpu global-ds-cpu))
+      (def total-tasks uint64_t (+ total-gpu-tasks total-cpu-tasks))
+      (if (> total-tasks 0)
+        (begin
+          (csym::fprintf stderr "~%Task Distribution:~%")
+          (csym::fprintf stderr "  GPU Tasks: %llu (%.2f%%)~%" 
+                  total-gpu-tasks 
+                  (* 100.0 (/ (cast double total-gpu-tasks) (cast double total-tasks))))
+          (csym::fprintf stderr "  CPU Tasks: %llu (%.2f%%)~%" 
+                  total-cpu-tasks 
+                  (* 100.0 (/ (cast double total-cpu-tasks) (cast double total-tasks))))))
+      
+      ;; 新增：计算并输出 GPU/CPU 时间比例
+      (def total-gpu-time double (+ global-ds-gpu-time global-lr-gpu-time))
+      (def total-cpu-time double (+ global-ds-cpu-time global-lr-cpu-time))
+      (def total-compute-time double (+ total-gpu-time total-cpu-time))
+      (if (> total-compute-time 0.0)
+        (begin
+          (csym::fprintf stderr "~%Time Distribution:~%")
+          (csym::fprintf stderr "  GPU Time: %.3f s (%.2f%%)~%" 
+                  total-gpu-time 
+                  (* 100.0 (/ total-gpu-time total-compute-time)))
+          (csym::fprintf stderr "  CPU Time: %.3f s (%.2f%%)~%" 
+                  total-cpu-time 
+                  (* 100.0 (/ total-cpu-time total-compute-time)))))
+      
+      (csym::fprintf stderr "================================================================~%")
+      (csym::fprintf stderr "~%")))
+  
+  ;; 同步
+  (csym::MPI_Barrier csym::MPI_COMM_WORLD))
 
 (def (csym::load_data) (fn void void)
   (decl fname (ptr char))
@@ -495,6 +723,10 @@
 
   (= nofc count)
   (= nNode countOfNode)
-  (= privateCTlist (cast (ptr cluster) (csym::malloc (* (sizeof cluster) LN))))
+
+  (csym::data_transfer)
+  ;; (csym::fprintf stderr "Geometry data transferred to GPU~%")
+  ;; ====================================
+  ;; (= privateCTlist (cast (ptr cluster) (csym::malloc (* (sizeof cluster) LN))))
   (= resultCTlist (cast (ptr cluster) (csym::malloc (* (sizeof cluster) LN))))
 )

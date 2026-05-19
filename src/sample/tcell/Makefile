@@ -6,15 +6,15 @@ SC2C_OPT=
 # SC2C_OPT+=-m              # don't remove intermediate files
 # SC2C_OPT+=-D DEBUG=0      # invalidate debugging code
 SC2C_OPT+=-D USEMPI=1       # validate MPI
-SC2C_OPT+=-D NO-EXCEPTION # invalidate exception support
+SC2C_OPT+=-D NO-EXCEPTION   # invalidate exception support
 SC2C_OPT+=-D PROFILE        # validate profiling
 # Command for XC Cube (an extended GCC that supports L-Closures and Closures)
 XCC=xcc
 # Command for gcc
-# GCC=gcc #$(XCC)
-GCC=gcc #$(XCC)
-# GCC=mpifccpx
-GCC=mpiicc
+
+GCC=mpicc
+export OMPI_CC=nvc
+
 # Include and library paths (from mpiicc --show)
 # MPI_INC = -I/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/comm_libs/12.2/openmpi4/openmpi-4.1.5/include
 # MPI_LIB = -L/opt/system/app/nvhpc/23.9/Linux_x86_64/23.9/comm_libs/12.2/openmpi4/openmpi-4.1.5/lib \
@@ -24,15 +24,42 @@ GCC=mpiicc
 # CFLAGS = -I/usr/include/openblas $(MPI_INC)
 # LDFLAGS = -L/usr/lib64 -lopenblas -lm -pthread $(MPI_LIB)
 
-
 # Command for Intel C Compiler
 ICC=icc
 # Optimization options for C Compilers
-OPT=-O3 -g $(MOPT) -std=gnu11 -qmkl
+# OPT=-O3 -g $(MOPT) -std=gnu11 -qmkl
+# OPT=-O3 -g $(MOPT) -std=gnu11 
 
-OPT+=$(CFLAGS) $(LDFLAGS) bem_data/bem_file.c bem_data/filling.c
+OPENBLAS_INC = /usr/include/openblas
+OPENBLAS_LIB = /usr/lib64
+
+CFLAGS = -std=gnu11 -O3 \
+         -I$(OPENBLAS_INC)
+LDFLAGS = -L$(OPENBLAS_LIB) \
+          -lopenblas
+
+OPTIMIZE = -tp zen3 -Munroll -Mvect=simd -Mcache_align -mcmodel=medium -Mnofma
+# ACC_FLAGS = -acc=gpu -gpu=cc80,cuda12.2,fma -Minfo=accel -g
+# ACC_FLAGS = -DGPU_PROFILING_RUNTIME -acc=gpu -gpu=cc80,cuda12.2,fma -Minfo=accel -g
+ACC_FLAGS = -DGPU_PROFILING_RUNTIME -acc=gpu -gpu=cc80,cuda12.2,nofma -Kieee -Minfo=accel -g
+OPT= bem_data/bem_file.c bem_data/filling.c \
+    $(OPTIMIZE) $(ACC_FLAGS) $(CFLAGS) $(LDFLAGS)
+
+# -gopt
+
+
+# OPT= bem_data/bem_file.c bem_data/filling1.c \
+# 	$(OPTIMIZE) $(ACC_FLAGS) $(CFLAGS) $(LDFLAGS)
+
+# OPT= bem_data/bem_file.c bem_data/filling2.c \
+# 	$(OPTIMIZE) $(ACC_FLAGS) $(CFLAGS) $(LDFLAGS)
+
+# OPT= bem_data/bem_file.c bem_data/filling3.c \
+# 	$(OPTIMIZE) $(ACC_FLAGS) $(CFLAGS) $(LDFLAGS)
+
+
 # OPT+=-mcmodel=medium -shared-intel
-# OPT+=-D USEMPI
+OPT+=-D USEMPI
 # OPT+=-no-multibyte-chars
 # OPT+=-mkl=sequential
 # OPT+=-qopt-report
@@ -69,7 +96,7 @@ endif
 # icc-c, icc-lw, and icc-clos}
 # By default, this Makefile makes all ALL_PROGS. You can make just one of targets by specifying the target file name,
 # (e.g., "make fib-gcc")
-APPS=fib fib-guard fib-try fib-thr fib-node lu cmp cmp-node pen pen-excep pen6x17 pen6x17-guard pen6x17-try pen6x17-thr nq nq-node nq-try nq-thr grav matmul spanning bcast copine0 copine1 copine2 copine3 copine4 copine0d copine1d copine3d hmat_all hmat_dist hmat_dist_cas hmat_dist_bcst hmat_sm_cas hmat_dist_casc hmat_dist_bcst_allgather hmat_dist_bcst_allgatherv hmat_ct_red hmat_ct_redp hmat_ct_reds
+APPS=fib fib-guard fib-try fib-thr fib-node lu cmp cmp-node pen pen-excep pen6x17 pen6x17-guard pen6x17-try pen6x17-thr nq nq-node nq-try nq-thr grav matmul spanning bcast copine0 copine1 copine2 copine3 copine4 copine0d copine1d copine3d hmat_all hmat_dist hmat_dist_cas hmat_dist_bcst hmat_sm_cas hmat_dist_casc hmat_dist_bcst_allgather hmat_dist_bcst_allgatherv hmat_ct_red hmat_ct_redp hmat_ct_reds hmat_ct_reds1 hmat_ct_reds2 hmat_ct_reds3 hmat_ct_reds_H hmat_ct_reds_s hmat_ct_reds_p hmat_ct_reds_c hmat_ct_reds_haku
 
 C_PROGS=$(addsuffix -c,$(APPS))
 GCC_PROGS=$(addsuffix -gcc,$(APPS))
@@ -178,3 +205,89 @@ clean:
 # "make clean" to delete all target files and intermediate files
 allclean:
 	rm -f $(ALL_PROGS) cinclude_tmp.h cinclude_tmp.se cinclude_tmp.se1 cinclude_tmp.se2 cinclude_tmp.se3 cinclude_tmp.se4 cinclude_tmp.se5 cinclude_tmp.se6 cinclude_tmp.se7
+
+
+
+# ############################################################
+# # Compiler & MPI
+# ############################################################
+
+# MPICC  = mpicc
+# CC     = $(MPICC)
+
+# ############################################################
+# # Paths (根据你的环境可微调)
+# ############################################################
+
+# OPENBLAS_INC = /usr/include/openblas
+# OPENBLAS_LIB = /usr/lib64
+
+# ############################################################
+# # sc2c / Tascell
+# ############################################################
+
+# SC2C   = sc2c
+
+# SC2C_FLAGS = \
+#     -D USEMPI=1 \
+#     -D NO-EXCEPTION \
+#     -D PROFILE \
+#     -D USE_AFFINITY=SCHED \
+#     -D NF-TYPE=CL-SC
+
+# ############################################################
+# # Compile & Link flags
+# ############################################################
+
+# CFLAGS = -O3 -g -std=gnu11 \
+#          -I$(OPENBLAS_INC)
+
+# LDFLAGS = -L$(OPENBLAS_LIB) \
+#           -lopenblas \
+#           -lpthread \
+#           -lm
+
+# ############################################################
+# # Source files
+# ############################################################
+
+# BEM_SRCS = \
+#     bem_data/bem_file.c \
+#     bem_data/filling.c
+
+# TASCELL_SRCS = \
+#     worker-gcc.c \
+#     cmd-serial-gcc.c \
+#     sendrecv.c \
+#     sock.c
+
+# GEN_SRCS = \
+#     hmat_ct_reds-gcc.c
+
+# ############################################################
+# # Target
+# ############################################################
+
+# TARGET = hmat_ct_reds-gcc
+
+# ############################################################
+# # Rules
+# ############################################################
+
+# all: $(TARGET)
+
+# # sc2c: worker.sc → worker-gcc.c
+# worker-gcc.c: worker.sc
+# 	$(SC2C) $(SC2C_FLAGS) $<
+
+# # final link
+# $(TARGET): $(BEM_SRCS) $(TASCELL_SRCS) $(GEN_SRCS)
+# 	$(CC) $(CFLAGS) \
+# 	    $(BEM_SRCS) \
+# 	    $(TASCELL_SRCS) \
+# 	    $(GEN_SRCS) \
+# 	    $(LDFLAGS) \
+# 	    -o $@
+
+# clean:
+# 	rm -f $(TARGET) worker-gcc.c *.o

@@ -1,3 +1,141 @@
 # Local experiment artifacts
-H-div
-../../c2scpp/
+syntax: glob
+\#*
+*~
+*.BAK
+*.bak
+*.old
+*.x86f
+*.fasl
+*.fas
+*.stackdump
+a.out
+a.exe
+cinclude_tmp.*
+*.se
+*.s
+
+syntax: regexp
+.*\.[0-9]*p*\..*\.sc$
+.*\.se[0-9]$
+
+# =========================
+# HPC / Build
+# =========================
+*.o
+*.a
+*.so
+*.out
+*.log
+*.mod
+
+build/
+bin/
+
+# =========================
+# Experiment outputs
+# =========================
+results*/
+output*/
+report*/
+*.nsys-rep
+
+# =========================
+# Temporary
+# =========================
+*copy*
+*.zip
+debug.log
+
+# =========================
+# Generated configure files
+# =========================
+config.log
+config.status
+libtool
+stamp-h1
+
+# =========================
+# Images / notebooks
+# =========================
+*.ipynb
+*.png
+*.jpg
+*.pdf
+
+# =========================
+# HPC job outputs
+# =========================
+*.sh.*
+*.txt_*
+
+# =========================
+# Data
+# =========================
+data/
+dataset/
+
+# =========================
+# Python cache
+# =========================
+__pycache__/
+*.pyc
+
+H-div/
+
+
+# ======================
+# Reports / logs
+# ======================
+report*
+*.out
+*.log
+
+# ======================
+# Temporary txt
+# ======================
+1.txt
+2.txt
+3.txt
+
+# ======================
+# CSV outputs
+# ======================
+*.csv
+
+# ======================
+# Generated binaries
+# ======================
+*-clos
+*-gcc
+
+# ======================
+# Profiling
+# ======================
+*.nsys-rep
+
+# ======================
+# Images
+# ======================
+*.png
+
+# ======================
+# HPC results
+# ======================
+results*/
+
+# ======================
+# Zip
+# ======================
+*.zip
+H-div/
+gpu_usage_report.txt
+
+exp2_*.sh
+exp3_*.sh
+hmat_*.py
+hmat_cthmat_ct_reds-clos.*
+hmat_ct_redp-gcc.c
+worker-*.c
+cmd-serial-*.c
+hmat_evaluation.md

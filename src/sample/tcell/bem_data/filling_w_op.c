@@ -1,0 +1,1679 @@
+// seconde paper version:Single-process + Single-GPU without MPI
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <time.h>
+#include <sys/time.h>
+#include "filling.h"
+#include <openacc.h>
+#include <pthread.h>
+#include <string.h>
+// #include <cuda_runtime.h>
+// #include <cublas_v2.h>
+#include <cblas.h>
+#include <stdint.h>
+
+
+// cublasHandle_t handle; 
+// static cublasHandle_t g_cublas_handle = NULL;
+
+static struct {
+  int total_dense_calls;  // 只统计密集矩阵调用次数
+  int gpu_executions;     // GPU实际执行次数
+  int cpu_executions;     // CPU实际执行次数
+  double gpu_time;
+  double cpu_time;
+} call_stats = {0};
+
+struct cluster* resultCTlist;  //store nodes of cluster tree
+#pragma acc declare create(resultCTlist)
+pthread_mutex_t myMutex = PTHREAD_MUTEX_INITIALIZER;
+
+int countCT=0;
+int nofc, nNode;
+int kparam = 50; 
+double (*zgmid)[3];
+double (*bgmid)[3];
+int (*f2n)[3];
+int denseB;
+int th_ds, th_lr; // threshold for dense and low-rank matrix filling
+
+// when filling the approximate block, calling acaplus
+int acaplus(double* zaa, double* zab, int ndl, int ndt, int nstrtl, int nstrtt, int kmax, double eps, double znrmmat, double pACA_EPS, 
+              double* pa_ref, double* pb_ref, int* lrow_done, int* lcol_done, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3], int id, int use_gpu, double *lr_cpu_time, double *lr_gpu_time)
+{
+  
+  int nmax = (ndl > ndt) ? ndl : ndt;
+  double* zau = (double*)calloc(nmax, sizeof(double));
+
+  // printf("zab present: %d\n", acc_is_present(zab, ndt * kmax * sizeof(double)));
+  // printf("zaa present: %d\n", acc_is_present(zaa, ndl * kmax * sizeof(double)));
+  // printf("lcol_done present: %d\n", acc_is_present(lcol_done, ndt * sizeof(int)));// 1 exist 
+  // printf("lrow_done present: %d\n", acc_is_present(lrow_done, ndl * sizeof(int)));
+  // printf("pa_ref present: %d\n", acc_is_present(pa_ref, ndl * sizeof(double)));
+  // printf("pb_ref present: %d\n", acc_is_present(pb_ref, ndt * sizeof(double)));
+  // printf("zau present: %d\n", acc_is_present(zau, nmax * sizeof(double)));
+  // printf("ndl present: %d\n", acc_is_present(&ndl, sizeof(int)));
+  
+  int INCY = 1;
+
+  double t0=0.0, t1=0.0;
+  if (use_gpu) {
+    t0 = get_time1();
+    #pragma acc enter data copyin(zab[0:ndt*kmax], zaa[0:ndl*kmax],\
+                                            pa_ref[0:ndl], pb_ref[0:ndt],\
+                                            lrow_done[0:ndl], lcol_done[0:ndt],\
+                                            zau[0:nmax], INCY)
+    t1 = get_time1();
+    *lr_gpu_time += (t1 - t0);
+    // printf("Start: GPU lr time= %.15lf t1-t0=%.15lf\n", *lr_gpu_time, t1-t0);
+  }
+
+  // #pragma acc enter data if(use_gpu) copyin(zab[0:ndt*kmax], zaa[0:ndl*kmax],\
+  //                                           pa_ref[0:ndl], pb_ref[0:ndt],\
+  //                                           lrow_done[0:ndl], lcol_done[0:ndt],\
+  //                                           zau[0:nmax], INCY)
+
+
+  
+  double *prow, *pcol;
+  int il,it,ib;
+  // int INCY = 1;
+  double za_ACA_EPS = 1.0e-10;
+
+  double znrm = znrmmat * sqrt((double)ndl * (double)ndt);
+  double ACA_EPS = pACA_EPS;
+
+  int ntries = max(ndl, ndt) + 1;
+  int ntries_row = 6;
+  int ntries_col = 6;
+  // Allocate and initialize arrays with OpenACC
+
+  // lrow_done = (int *)calloc(ndl, sizeof(int));
+  // lcol_done = (int *)calloc(ndt, sizeof(int));
+
+  // pa_ref = (double *)malloc(ndl * sizeof(double));
+  // pb_ref = (double *)malloc(ndt * sizeof(double));
+
+  int k = 0;
+  int j_ref = 0;
+  // pa_ref = (double *)malloc(ndl * sizeof(double));                            
+  
+  double (*zaa2)[ndl] = (double(*)[ndl])zaa;
+  double (*zab2)[ndt] = (double(*)[ndt])zab;
+  
+  comp_col(zaa, zab, ndl, ndt, k, j_ref, pa_ref, nstrtl, nstrtt, lrow_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id, lr_cpu_time, lr_gpu_time);
+
+  // double colnorm = simple_dnrm2(ndl, pa_ref, INCY, use_gpu);
+  double colnorm = cblas_dnrm2(ndl, pa_ref, INCY); // blas used
+  int i_ref = minabsvalloc_d(pa_ref, ndl);
+  double rownorm = fabs(pa_ref[i_ref]);
+  // pb_ref = (double *)malloc(ndt * sizeof(double));
+  comp_row(zaa, zab, ndl, ndt, k, i_ref, pb_ref, nstrtl, nstrtt, lcol_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id, lr_cpu_time, lr_gpu_time);
+
+  // rownorm = simple_dnrm2(ndt, pb_ref, INCY, use_gpu); // blas used
+  rownorm = cblas_dnrm2(ndt, pb_ref, INCY); // blas used
+
+  double apxnorm = 0.0;
+  int lstop_aca = 0;
+  
+  double col_maxval, row_maxval;
+  // Main ACA loop with OpenACC parallelization
+  while(k < kmax && (ntries_row > 0 || ntries_col > 0) && ntries > 0){
+    ntries--;
+    pcol = &zaa2[k][0];
+    prow = &zab2[k][0];
+    col_maxval = 0.0;
+    int i = maxabsvalloc_d(pa_ref, ndl); // find the index of the maximum absolute value in pa_ref
+    col_maxval = fabs(pa_ref[i]); // get the maximum absolute value in pa_ref
+    row_maxval = 0.0;
+    int j = maxabsvalloc_d(pb_ref, ndt); // find the index of the maximum absolute value in pb_ref
+    row_maxval = fabs(pb_ref[j]); // get the maximum absolute value in pb_ref
+    double zinvmax;
+    if(row_maxval > col_maxval){
+      if(j != j_ref){
+        comp_col(zaa, zab, ndl, ndt, k, j, pcol, nstrtl, nstrtt, lrow_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id, lr_cpu_time, lr_gpu_time);
+      }else{
+        memcpy(pcol, pa_ref, sizeof(double) * ndl); 
+        // for(il=0;il<ndl;il++){
+        //   pcol[il] = pa_ref[il];
+        // }
+      }
+      i = maxabsvalloc_d(pcol, ndl); // find the index of the maximum absolute value in pcol
+      col_maxval = fabs(pcol[i]); // get the maximum absolute value in pcol
+      // printf("i=%d, col_maxval=%f\n", i, col_maxval);
+
+      if(col_maxval < ACA_EPS && k >= 1){
+        lstop_aca = 1;
+      }else{
+        comp_row(zaa, zab, ndl, ndt, k, i, prow, nstrtl, nstrtt, lcol_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id, lr_cpu_time, lr_gpu_time);
+        if(fabs(pcol[i]) > 1.0e-20){
+          zinvmax = 1.0 / pcol[i];
+        }else{
+          k = max(k-1, 0);
+          // fprintf(stderr, "break\n");
+          break;
+        }
+        for(il=0;il<ndl;il++){
+          pcol[il] *= zinvmax;
+        } 
+      }
+    }else{
+      if(i != i_ref){
+        comp_row(zaa, zab, ndl, ndt, k, i, prow, nstrtl, nstrtt, lcol_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id, lr_cpu_time, lr_gpu_time);
+      }else{
+        memcpy(prow, pb_ref, sizeof(double) * ndt);
+        // for(il=0;il<ndt;il++){
+        //   prow[il] = pb_ref[il];
+        // }
+      }
+      j = maxabsvalloc_d(prow, ndt);
+      row_maxval = fabs(prow[j]);
+
+      if(row_maxval < ACA_EPS && k >= 1){
+        lstop_aca = 1;
+      }else{
+        comp_col(zaa, zab, ndl, ndt, k, j, pcol, nstrtl, nstrtt, lrow_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id, lr_cpu_time, lr_gpu_time);
+        if(fabs(prow[j]) > 1.0e-20){
+          zinvmax = 1.0 / prow[j];
+        }else{
+          k = max(k-1, 0);
+          break;
+        }
+        for(il=0;il<ndt;il++){
+          prow[il] *= zinvmax;
+        } 
+      }
+    }
+    lrow_done[i] = 1;
+    lcol_done[j] = 1;
+
+    if(i != i_ref){
+      zinvmax = -pcol[i_ref];
+      for(il=0;il<ndt;il++){
+        pb_ref[il] += prow[il] * zinvmax;
+      }
+      // rownorm = simple_dnrm2(ndt, pb_ref, INCY, use_gpu); // blas used
+      rownorm = cblas_dnrm2(ndt, pb_ref, INCY); // blas used
+      
+    }
+    if(i == i_ref || rownorm < ACA_EPS){
+      if(i == i_ref){
+        ntries_row++;
+      }
+      if(ntries_row > 0){
+        rownorm = 0.0;
+        i = i_ref;
+        while(i != (i_ref + ndl - 1) % ndl && rownorm < za_ACA_EPS && ntries_row > 0){
+          if(lrow_done[i] == 0){
+            comp_row(zaa, zab, ndl, ndt, k+1, i, pb_ref, nstrtl, nstrtt, lcol_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id, lr_cpu_time, lr_gpu_time);
+            // rownorm = simple_dnrm2(ndt, pb_ref, INCY, use_gpu);  // blas used
+            rownorm = cblas_dnrm2(ndt, pb_ref, INCY);
+            if(rownorm < ACA_EPS){
+              lrow_done[i] = 1;
+            }
+            ntries_row--;
+          }else{
+            rownorm = 0.0;
+          }
+          i = (i+1) % ndl;
+        }
+        i_ref = (i + ndl - 1) % ndl;
+      }
+    }
+
+    if(j != j_ref){
+      zinvmax = -prow[j_ref];
+      for(il=0;il<ndl;il++){
+        pa_ref[il] += pcol[il] * zinvmax;
+      }
+      // colnorm = simple_dnrm2(ndl, pa_ref, INCY, use_gpu);  // blas used
+      colnorm = cblas_dnrm2(ndl, pa_ref, INCY); // blas used
+    }
+    if(j == j_ref || colnorm < ACA_EPS){
+      if(j == j_ref){
+        ntries_col++;
+      }
+      if(ntries_col > 0){
+        colnorm = 0.0;
+        j = j_ref;
+        while(j != (j_ref + ndt - 1) % ndt && colnorm < za_ACA_EPS && ntries_col > 0){
+          if(lcol_done[j] == 0){
+            comp_col(zaa, zab, ndl, ndt, k+1, j, pa_ref, nstrtl, nstrtt, lrow_done, zau, nofc, zgmid, f2n, bgmid, use_gpu, id, lr_cpu_time, lr_gpu_time);
+            // colnorm = simple_dnrm2(ndl, pa_ref, INCY, use_gpu);  // blas used
+            colnorm = cblas_dnrm2(ndl, pa_ref, INCY); // blas used
+            if(colnorm < ACA_EPS){
+              lcol_done[j] = 1;
+            }
+            ntries_col--;
+          }else{
+            colnorm = 0.0;
+          }
+          j = (j+1) % ndt;
+        } 
+        j_ref = (j + ndt - 1) % ndt;
+      }
+    }
+
+    if(colnorm < ACA_EPS && rownorm < ACA_EPS && k >= 1){
+      lstop_aca = 1;
+      k = k + 1;
+    }
+
+    if(lstop_aca == 0){
+      // double blknorm = simple_dnrm2(ndl, pcol, INCY, use_gpu) * simple_dnrm2(ndt, prow, INCY, use_gpu);  // blas used
+      double blknorm = cblas_dnrm2(ndl, pcol, INCY) * cblas_dnrm2(ndt, prow, INCY);  // blas used
+      if(k == 0){
+        apxnorm = blknorm;
+      }else{
+        double compared = apxnorm * eps;
+        if(blknorm < compared && rownorm < compared && colnorm < compared && k >= 1){
+          lstop_aca = 1;
+        }
+      }
+    }
+    if(lstop_aca == 1 && k >= 1){
+      break;
+    }
+
+    k++;
+    // printf("k=%d, ntries_row=%d, ntries_col=%d, ntries=%d\n", k, ntries_row, ntries_col, ntries);
+  }
+
+  if (use_gpu) {
+    t0 = get_time1();
+    #pragma acc exit data delete(zaa[0:ndl*kmax], zab[0:ndt*kmax], \
+                               pa_ref[0:ndl], pb_ref[0:ndt], \
+                               lrow_done[0:ndl], lcol_done[0:ndt], zau[0:nmax])
+    pthread_mutex_unlock(&myMutex);
+    t1 = get_time1();
+    *lr_gpu_time += (t1 - t0);
+    // printf("End: GPU lr time= %.15lf t1-t0=%.15lf\n", *lr_gpu_time, t1-t0);
+  }
+  // #pragma acc exit data delete(zaa[0:ndl*kmax], zab[0:ndt*kmax], \
+  //                              pa_ref[0:ndl], pb_ref[0:ndt], \
+  //                              lrow_done[0:ndl], lcol_done[0:ndt], zau[0:nmax]) if(use_gpu)
+  
+  // if (use_gpu) {
+  //   pthread_mutex_unlock(&myMutex);
+  // }
+
+  // if (!use_gpu) {
+  //   *lr_cpu_time += col_cpu_time + row_cpu_time;
+  //   // printf("lr_cpu_time= %.15lf \n", *lr_cpu_time);
+  // }
+  // printf("delete: pa_ref present: %d\n", acc_is_present(pa_ref, ndl * sizeof(double)));                            
+
+  if(k < 1){
+    printf("alert!\n");
+    printf("colnorm=%f rownorm=%f ACA_EPS=%f\n", colnorm, rownorm, ACA_EPS);
+    printf("col_maxval=%f row_maxval=%f\n", col_maxval, row_maxval);
+    printf("ntries_row=%d ntries_col=%d ntries=%d\n", ntries_row, ntries_col, ntries);
+    printf("k=%d\n", k);
+  }
+  return k;
+}
+
+void check_gpu_usage() {
+    acc_device_t device_type = acc_get_device_type();
+    int device_num = acc_get_device_num(acc_device_nvidia);
+
+    if (device_type == acc_device_nvidia) {
+        printf("OpenACC is running on GPU %d\n", device_num);
+    } else {
+        printf("OpenACC is running on CPU \n");
+    }
+}
+
+void data_transfer(){
+  #pragma acc enter data copyin(nofc, nNode, zgmid[0:nofc][0:3], f2n[0:nofc][0:3], bgmid[0:nNode][0:3])
+  // if (g_cublas_handle == NULL) {
+  //   cublasCreate(&g_cublas_handle);
+  // }
+}
+
+static pthread_mutex_t mm;
+
+//st_lf：指向 leafmtx 结构体的指针，存储矩阵数据
+void fill_sub_leafmtx(struct leafmtx *st_lf, double znrmmat, int id, int *gpu_lr_cnt, int *cpu_lr_cnt, int *gpu_ds_cnt, int *cpu_ds_cnt, uint64_t *gpu_lr_elem, uint64_t *cpu_lr_elem, uint64_t *gpu_ds_elem, uint64_t *cpu_ds_elem, uint64_t *pen_ds_gpu_subm, uint64_t *pen_ds_gpu_elem, uint64_t *pen_lr_gpu_subm, uint64_t *pen_lr_gpu_elem, double *ds_cpu_time, double *lr_cpu_time, double *ds_gpu_time, double *lr_gpu_time){
+  double eps = 1.0e-8;    
+  double ACA_EPS = 0.9 * eps;   
+  int kparam = 50; //max rank of the partition
+  int ip,il,it; 
+
+  int ndl = st_lf->ndl; // the length of the partition
+  int ndt = st_lf->ndt; // the width of the partition
+  int ns = ndl * ndt; // the size of the partition
+  int nstrtl = st_lf->nstrtl; // the coordination of the first element of partition
+  int nstrtt = st_lf->nstrtt; // the coordination of the first element of partition
+  int ltmtx = st_lf->ltmtx;    // the kind of the matrix; 1:rk 2:full
+  int kt;
+  // int ill, itt; // the coordination of the element in the full matrix
+  int use_gpu = 0;
+  // clock_t start_time = clock();
+  // int actually_ran_on_gpu = 0;  // 0=CPU, 1=GPU
+
+  // Use low-rank approximate storage
+  if(ltmtx == 1){
+    // low_rank++;
+    // printf("workload: LR=%d, ndl=%d, ndt=%d\n", kparam * (ndl + ndt), ndl, ndt);
+    st_lf->a1 = (double*)malloc(sizeof(double) * ndt * kparam); 
+    st_lf->a2 = (double*)malloc(sizeof(double) * ndl * kparam);
+    if(!st_lf->a1 || !st_lf->a2){
+      printf("allocate a1 or a2 failed!\n");
+      exit(99);
+    }
+
+    double *pa_ref = (double *)malloc(ndl * sizeof(double));
+    double *pb_ref = (double *)malloc(ndt * sizeof(double));
+    int *lrow_done = (int *)calloc(ndl, sizeof(int));
+    int *lcol_done = (int *)calloc(ndt, sizeof(int));
+
+    // -- GPU or CPU filling low-rank matrix-----
+    // fprintf(stderr, "[Debug] workload=%d, th_lr=%d\n", kparam * (ndl + ndt), th_lr);
+    if((kparam * (ndl + ndt)) >= th_lr && pthread_mutex_trylock(&myMutex) == 0){
+      use_gpu = 1;
+      (*gpu_lr_cnt)++;
+      // fprintf(stderr, "workload: LR=%d, ndl=%d, ndt=%d, worker_id=%d, use_gpu=%d\n", kparam * (ndl + ndt), ndl, ndt, id, use_gpu);
+    }else{
+      // use_gpu = 0;
+      (*cpu_lr_cnt)++;
+    }
+    // fprintf(stderr, "workload1: LR=%d, ndl=%d, ndt=%d, worker_id=%d, use_gpu=%d\n", kparam * (ndl + ndt), ndl, ndt, id, use_gpu);
+
+    // double t_start = get_time();
+    kt = acaplus(st_lf->a2, st_lf->a1, ndl, ndt, nstrtl, nstrtt,
+                        kparam, eps, znrmmat, ACA_EPS,
+                        pa_ref, pb_ref, lrow_done, lcol_done, nofc, zgmid, f2n, bgmid, id, use_gpu, lr_cpu_time, lr_gpu_time); // the actual rank of the partition
+
+    // double t_end = get_time();
+    // fprintf(stderr, "LR: use_gpu=%d, Worker %d: acaplus time: %.6f seconds, nstrtl=%d, nstrtt=%d, ndl=%d, ndt=%d\n", use_gpu, id, t_end - t_start, nstrtl, nstrtt, ndl, ndt);
+
+    st_lf->kt = kt; // store the actual rank of the partition
+
+    if(kt > kparam){ 
+      printf("WARNING: Insufficient k: kt=%d, kparam=%d, nstrtl=%d, nstrtt=%d, ndl=%d, ndt=%d\n", kt, kparam, nstrtl, nstrtt, ndl, ndt);
+    }
+
+    st_lf->a1 = (double *)realloc(st_lf->a1, kt * ndt * sizeof(double));
+    st_lf->a2 = (double *)realloc(st_lf->a2, kt * ndl * sizeof(double)); //realloc memory so that it matches the rank corresponding to kt.
+
+    if(use_gpu){
+      (*gpu_lr_elem) += kt * (ndl + ndt);
+    }else{
+      (*cpu_lr_elem) += kt * (ndl + ndt);
+    } 
+
+    if((kparam * (ndl + ndt)) >= th_lr){
+      (*pen_lr_gpu_subm)++;
+      (*pen_lr_gpu_elem) += kt * (ndl + ndt);
+    }
+    
+    // low_rank++; // count the number of low-rank matrices filled
+  }else if(ltmtx == 2){
+    // printf("workload: DS=%d, ndl=%d, ndt=%d\n", ns, ndl, ndt);
+    st_lf->a1 = (double *)malloc(sizeof(double) * ns);
+
+    // fprintf(stderr, "[Debug] ns=%d, th_ds=%d\n", ns, th_ds);
+    // if(ns >= th_ds && pthread_mutex_trylock(&myMutex) == 0) {
+    //   use_gpu = 1;
+    //   (*gpu_ds_cnt)++;
+    //   (*gpu_ds_elem) += ns;
+    //   // fprintf(stderr, "workload: DS=%d, th_ds=%d, worker_id=%d, use_gpu=%d\n", ns, th_ds, id, use_gpu);
+    // }else{
+    //   // use_gpu = 0;
+    //   (*cpu_ds_cnt)++;
+    //   (*cpu_ds_elem) += ns;
+    // }
+    // // fprintf(stderr, "workload1: DS=%d, ns=%d, worker_id=%d, use_gpu=%d\n", ns, ns, id, use_gpu);
+
+    // 数据统计专用
+    int can_use_gpu = (ns >= th_ds);
+    int got_gpu = 0;
+
+    if (can_use_gpu) {
+        (*pen_ds_gpu_subm)++;
+        (*pen_ds_gpu_elem) += ns;
+
+        if (pthread_mutex_trylock(&myMutex) == 0) {
+            got_gpu = 1;
+        }
+    }
+
+    if (got_gpu) {
+        use_gpu = 1;
+        (*gpu_ds_cnt)++;
+        (*gpu_ds_elem) += ns;
+    } else {
+        use_gpu = 0;
+        (*cpu_ds_cnt)++;
+        (*cpu_ds_elem) += ns;
+    }
+
+    struct timespec ds_cpu_start_ts, ds_cpu_end_ts;
+    if(!use_gpu){
+    get_time(&ds_cpu_start_ts);
+    // printf("ds_cpu_start: sec=%ld, nsec=%ld \n", ds_cpu_start_ts.tv_sec, ds_cpu_start_ts.tv_nsec);
+    }
+
+
+    double ds_cpu_start1 = 0.0, ds_cpu_end1 = 0.0;
+    double de_gpu_start1 = 0.0, de_gpu_end1 = 0.0;
+    if (!use_gpu) {
+      ds_cpu_start1 = get_time1();
+    // printf("ds_cpu_start1= %.15e, ds_cpu_start1=%.15lf\n", ds_cpu_start1, ds_cpu_start1);
+    // printf("ds_cpu_start1= %.15lf, ds_cpu_start1=%.15lf\n", ds_cpu_start1, ds_cpu_start1);
+    } else {
+      de_gpu_start1 = get_time1();
+    }
+
+    #pragma acc data if(use_gpu) copy(st_lf->a1[0:ns])
+    {
+      double (*tempa1)[ndt] = (double(*)[ndt])st_lf->a1;
+      double xf[3], yf[3], zf[3];
+      double xp, yp, zp; 
+      // #pragma acc update device(zgmid[0:nofc][0:3], f2n[0:nofc][0:3], bgmid[0:nNode][0:3]) if(use_gpu && ns>=th_ds) // 确保数据在设备
+      #pragma acc parallel loop collapse(2) if(use_gpu) \
+                 present(zgmid[0:nofc][0:3], f2n[0:nofc][0:3], bgmid[0:nNode][0:3], st_lf->a1[0:ns])  \
+                 private(xf, yf, zf, xp, yp, zp)
+      for(int il = 0; il < ndl; il++) {
+          for(int it = 0; it < ndt; it++) {
+            int ill = il + nstrtl; 
+            int itt = it + nstrtt;
+
+            xp = zgmid[ill][0];
+            yp = zgmid[ill][1];
+            zp = zgmid[ill][2];
+
+            int ni0 = f2n[itt][0], ni1 = f2n[itt][1], ni2 = f2n[itt][2];
+            xf[0] = bgmid[ni0][0]; xf[1] = bgmid[ni1][0]; xf[2] = bgmid[ni2][0];
+            yf[0] = bgmid[ni0][1]; yf[1] = bgmid[ni1][1]; yf[2] = bgmid[ni2][1];
+            zf[0] = bgmid[ni0][2]; zf[1] = bgmid[ni1][2]; zf[2] = bgmid[ni2][2];
+
+            // Sequential loop to compute face integral values
+            // #pragma acc loop seq 
+            // double xf[3], yf[3], zf[3];
+            // for (int i = 0; i < 3; i++) {
+            //   int ni = f2n[itt][i];
+            //   xf[i] = bgmid[ni][0];
+            //   yf[i] = bgmid[ni][1];
+            //   zf[i] = bgmid[ni][2];
+            // }
+            // printf("ill=%d, itt=%d, xf(%f,%f,%f), yf=(%f,%f,%f), zf=(%f,%f,%f), xp=%f, yp=%f, zp=%f\n", ill, itt, xf[0], xf[1], xf[2], yf[0], yf[1], yf[2], zf[0], zf[1], zf[2], xp, yp, zp);
+            tempa1[il][it] = face_integral2(xf, yf, zf, xp, yp, zp);
+          }
+        }         
+    }
+
+    // double t_end = get_time();
+    // fprintf(stderr, "DS: use_gpu=%d, Worker %d: acaplus time: %.6f seconds, nstrtl=%d, nstrtt=%d, ndl=%d, ndt=%d\n", use_gpu, id, t_end - t_start, nstrtl, nstrtt, ndl, ndt);
+
+    // if(use_gpu){
+    //   pthread_mutex_unlock(&myMutex);} 
+
+    // if(!use_gpu){
+    // get_time(&ds_cpu_end_ts);
+    // // printf("ds_cpu_end: sec=%ld, nsec=%ld \n", ds_cpu_end_ts.tv_sec, ds_cpu_end_ts.tv_nsec);
+    // *ds_cpu_time += diff_time(&ds_cpu_start_ts, &ds_cpu_end_ts);
+    // // printf("ds_cpu diff = %.15lf seconds\n", diff_time(&ds_cpu_start_ts, &ds_cpu_end_ts));
+    // }
+
+    // if(!use_gpu){
+    // ds_cpu_end1 = get_time1();
+    // printf("ds_cpu_end1= %.15lf, ds_cpu_end1=%.15lf \n", ds_cpu_end1, ds_cpu_end1);
+    // // printf("ds_cpu_end1= %.15e, ds_cpu_end1=%.15lf \n", ds_cpu_end1, ds_cpu_end1);
+    // *ds_cpu_time += (ds_cpu_end1 - ds_cpu_start1);
+    // printf("ds_cpu_time= %.15lf, ds_cpu_time= %.15lf \n", *ds_cpu_time, *ds_cpu_time);
+    // // printf("ds_cpu_time= %.15e, ds_cpu_time= %.15lf \n", *ds_cpu_time, *ds_cpu_time);
+    // // printf("ds_cpu diff = %.15lf seconds\n", diff_time(&ds_cpu_start_ts, &ds_cpu_end_ts));
+    // }
+
+    if (!use_gpu) {
+      ds_cpu_end1 = get_time1();
+      // printf("ds_cpu_end1= %.15lf \n", ds_cpu_end1);
+      *ds_cpu_time += (ds_cpu_end1 - ds_cpu_start1);
+      // printf("ds_cpu_time= %.15e, ds_cpu_time= %.15lf \n", *ds_cpu_time, *ds_cpu_time);
+    }else {
+      pthread_mutex_unlock(&myMutex);
+      de_gpu_end1 = get_time1();
+      *ds_gpu_time += (de_gpu_end1 - de_gpu_start1);
+    }
+  }
+  // int workload = kparam * (ndl + ndt); // workload of the partition
+  // printf("workload: LR=%d, DS=%d, kparam=%d, ndl=%d, ndt=%d, ns=%d, worker_id=%d, use_gpu=%d\n", kparam * (ndl + ndt), ns, kparam, ndl, ndt, ns, id, use_gpu);
+}   
+
+void comp_row(double* zaa, double* zab,
+              int ndl, int ndt, int k, int il,
+              double* row,
+              int nstrtl, int nstrtt,
+              int* lrow_done,
+              double* zau,
+              int nofc,
+              double zgmid[][3],
+              int f2n[][3],
+              double bgmid[][3],
+              int use_gpu,
+              int id,
+              double *lr_cpu_time,
+              double *lr_gpu_time
+            )
+{
+    int it;
+    double xf[3], yf[3], zf[3];
+    double xp, yp, zp;
+
+    double t_start, t_end;
+
+    /*========================
+      主计算部分计时
+     ========================*/
+    t_start = get_time1();
+
+    if (use_gpu) {
+        #pragma acc update device(zab[0:ndt*kparam], \
+                                  zaa[0:ndl*kparam], \
+                                  row[0:ndt], \
+                                  lrow_done[0:ndt])
+    }
+
+    #pragma acc parallel if(use_gpu) \
+        present(zab[0:ndt*kparam], zaa[0:ndl*kparam], \
+                zgmid[0:nofc][0:3], f2n[0:nofc][0:3], \
+                bgmid[0:nNode][0:3], \
+                row[0:ndt], lrow_done[0:ndt])
+    {
+        #pragma acc loop private(xf, yf, zf) \
+                         firstprivate(ndt, nstrtl, nstrtt)
+        for (it = 0; it < ndt; it++) {
+            if (lrow_done[it] == 0) {
+                int ill = il + nstrtl;
+                int itt = it + nstrtt;
+
+                int n[3];
+
+                xp = zgmid[ill][0];
+                yp = zgmid[ill][1];
+                zp = zgmid[ill][2];
+
+                for (int i = 0; i < 3; i++) {
+                    n[i] = f2n[itt][i];
+                }
+
+                #pragma acc loop seq
+                for (int i = 0; i < 3; i++) {
+                    xf[i] = bgmid[n[i]][0];
+                    yf[i] = bgmid[n[i]][1];
+                    zf[i] = bgmid[n[i]][2];
+                }
+
+                row[it] = face_integral2(xf, yf, zf, xp, yp, zp);
+            }
+        }
+    }
+
+    if (k == 0) {
+        #pragma acc update host(row[0:ndt]) if(use_gpu)
+        t_end = get_time1();
+
+        if (use_gpu)
+            *lr_gpu_time += (t_end - t_start);
+        else
+            *lr_cpu_time += (t_end - t_start);
+
+        return;
+    }
+
+    adotsub_dsm(row, zab, zaa, il, ndt, k, ndt, ndl, zau);
+
+    #pragma acc parallel loop if(use_gpu) \
+        present(lrow_done[0:ndt], row[0:ndt]) \
+        firstprivate(ndt)
+    for (it = 0; it < ndt; it++) {
+        if (lrow_done[it] != 0) {
+            row[it] = 0.0;
+        }
+    }
+
+    if (use_gpu) {
+        #pragma acc update host(row[0:ndt])
+    }
+
+    t_end = get_time1();
+
+    /*========================
+      时间累加
+     ========================*/
+    if (use_gpu)
+        *lr_gpu_time += (t_end - t_start);
+    else
+        *lr_cpu_time += (t_end - t_start);
+}
+
+void comp_col(double* zaa, double* zab,
+                int ndl, int ndt, int k, int it,
+                double* col,
+                int nstrtl, int nstrtt,
+                int* lrow_done,
+                double* zau,
+                int nofc,
+                double zgmid[][3],
+                int f2n[][3],
+                double bgmid[][3],
+                int use_gpu,
+                int id,
+                double *lr_cpu_time,
+                double *lr_gpu_time)
+{
+    double xf[3], yf[3], zf[3];
+    double t_start, t_end;
+
+    /*========================
+      计时开始
+     ========================*/
+    t_start = get_time1();
+
+    if (use_gpu) {
+        #pragma acc update device(zab[0:ndt*kparam], \
+                                  zaa[0:ndl*kparam], \
+                                  col[0:ndl], \
+                                  lrow_done[0:ndl])
+    }
+
+    #pragma acc parallel if(use_gpu) \
+        present(zab[0:ndt*kparam], zaa[0:ndl*kparam], \
+                zgmid[0:nofc][0:3], f2n[0:nofc][0:3], \
+                bgmid[0:nNode][0:3], \
+                col[0:ndl], lrow_done[0:ndl])
+    {
+        #pragma acc loop private(xf, yf, zf) \
+                         firstprivate(ndl, it, nstrtl, nstrtt)
+        for (int il = 0; il < ndl; il++) {
+            if (lrow_done[il] == 0) {
+                int ill = il + nstrtl;
+                int itt = it + nstrtt;
+
+                double xp = zgmid[ill][0];
+                double yp = zgmid[ill][1];
+                double zp = zgmid[ill][2];
+
+                #pragma acc loop seq
+                for (int i = 0; i < 3; i++) {
+                    int ni = f2n[itt][i];
+                    xf[i] = bgmid[ni][0];
+                    yf[i] = bgmid[ni][1];
+                    zf[i] = bgmid[ni][2];
+                }
+
+                col[il] = face_integral2(xf, yf, zf, xp, yp, zp);
+            }
+        }
+    }
+
+    if (k == 0) {
+        #pragma acc update host(col[0:ndl]) if(use_gpu)
+
+        t_end = get_time1();
+        if (use_gpu)
+            *lr_gpu_time += (t_end - t_start);
+        else
+            *lr_cpu_time += (t_end - t_start);
+
+        return;
+    }
+
+    adotsub_dsm(col, zaa, zab, it, ndl, k, ndl, ndt, zau);
+
+    #pragma acc parallel loop if(use_gpu) \
+        present(lrow_done[0:ndl], col[0:ndl]) \
+        firstprivate(ndl)
+    for (int il = 0; il < ndl; il++) {
+        if (lrow_done[il] != 0) {
+            col[il] = 0.0;
+        }
+    }
+
+    if (use_gpu) {
+        #pragma acc update host(col[0:ndl])
+    }
+
+    /*========================
+      计时结束 & 累加
+     ========================*/
+    t_end = get_time1();
+
+    if (use_gpu)
+        *lr_gpu_time += (t_end - t_start);
+    else
+        *lr_cpu_time += (t_end - t_start);
+}
+
+
+// double comp_row(
+//     double* zaa, double* zab,
+//     int ndl, int ndt, int k, int il,
+//     double* row,
+//     int nstrtl, int nstrtt,
+//     int* lrow_done,
+//     double* zau,
+//     int nofc,
+//     double zgmid[][3],
+//     int f2n[][3],
+//     double bgmid[][3],
+//     int use_gpu,
+//     int id,
+//     ExecTime *t
+// ){
+//     int it;
+//     double xf[3], yf[3], zf[3];
+//     double xp, yp, zp;
+//     // double row_cpu_start = 0.0, row_cpu_end = 0.0;
+
+//     /* ---- CPU timing start ---- */
+//     // if (!use_gpu) {
+//     //     row_cpu_start = get_time1();
+//     // }
+
+//     double cpu_start = 0.0, cpu_end = 0.0;
+//     double gpu_start = 0.0, gpu_end = 0.0;
+
+//     t->cpu = 0.0;
+//     t->gpu = 0.0;
+
+//     if (!use_gpu) cpu_start = get_time1();
+//     else          gpu_start = get_time1();
+
+//     if (use_gpu) {
+//         #pragma acc update device(zab[0:ndt*kparam], zaa[0:ndl*kparam], row[0:ndt], lrow_done[0:ndt])
+//     }
+
+//     #pragma acc parallel if(use_gpu) \
+//         present(zab[0:ndt*kparam], zaa[0:ndl*kparam], \
+//                 zgmid[0:nofc][0:3], f2n[0:nofc][0:3], \
+//                 bgmid[0:nNode][0:3], row[0:ndt], lrow_done[0:ndt])
+//     {
+//         #pragma acc loop private(xf, yf, zf) firstprivate(ndt, il, nstrtl, nstrtt)
+//         for (it = 0; it < ndt; it++) {
+//             if (lrow_done[it] == 0) {
+//                 int ill = il + nstrtl;
+//                 int itt = it + nstrtt;
+
+//                 int n[3];
+
+//                 xp = zgmid[ill][0];
+//                 yp = zgmid[ill][1];
+//                 zp = zgmid[ill][2];
+
+//                 for (int i = 0; i < 3; i++) {
+//                     n[i] = f2n[itt][i];
+//                 }
+
+//                 #pragma acc loop seq
+//                 for (int i = 0; i < 3; i++) {
+//                     xf[i] = bgmid[n[i]][0];
+//                     yf[i] = bgmid[n[i]][1];
+//                     zf[i] = bgmid[n[i]][2];
+//                 }
+
+//                 row[it] = face_integral2(xf, yf, zf, xp, yp, zp);
+//             }
+//         }
+//     }
+
+//     /* ---- k == 0 special case ---- */
+//     if (k == 0) {
+//         #pragma acc update host(row[0:ndt]) if(use_gpu)
+//         if (!use_gpu) {
+//             cpu_end = get_time1();
+//             t->cpu = cpu_end - cpu_start;
+//             //  fprintf(stderr, "k=0 , comp_col on CPU ended. Time taken: %.15f seconds.\n", row_cpu_end - row_cpu_start);
+//             return cpu_end - cpu_start;
+//         } else {
+//             return 0.0;
+//         }
+//         // return 0.0;
+//     }
+
+//     /* ---- adotsub ---- */
+//     adotsub_dsm(row, zab, zaa, il, ndt, k, ndt, ndl, zau);
+
+//     #pragma acc parallel loop if(use_gpu) \
+//         present(lrow_done[0:ndt], row[0:ndt]) firstprivate(ndt)
+//     for (it = 0; it < ndt; it++) {
+//         if (lrow_done[it] != 0) {
+//             row[it] = 0.0;
+//         }
+//     }
+
+//     if (use_gpu) {
+//         #pragma acc update host(row[0:ndt])
+//     }
+
+//     /* ---- CPU timing end ---- */
+//     if (!use_gpu) {
+//       row_cpu_end = get_time1();
+//       // fprintf(stderr, "comp_col on CPU ended. Time taken: %.15f seconds.\n", row_cpu_end - row_cpu_start);
+//       return row_cpu_end - row_cpu_start;
+//     }
+//     return 0.0;
+// }
+
+// // void comp_row(double* zaa, double* zab, int ndl, int ndt, int k, int il, double* row, int nstrtl, int nstrtt, int* lrow_done, double* zau){
+// void comp_row(double* zaa, double* zab, int ndl, int ndt, int k, int il, double* row, int nstrtl, int nstrtt, int* lrow_done, double* zau, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3], int use_gpu, int id){
+//   int it;
+//   double xf[3], yf[3], zf[3];
+//   double xp, yp, zp;
+//   if (use_gpu) {
+//     #pragma acc update device(zab[0:ndt*kparam], zaa[0:ndl*kparam], row[0:ndt], lrow_done[0:ndt])
+//   }
+//   #pragma acc parallel if(use_gpu) present(zab[0:ndt*kparam], zaa[0:ndl*kparam], zgmid[0:nofc][0:3], f2n[0:nofc][0:3], bgmid[0:nNode][0:3], row[0:ndt], lrow_done[0:ndt])
+//   {
+//     #pragma acc loop private(xf, yf, zf) firstprivate(ndt, it, nstrtl, nstrtt) 
+//     for(it=0;it<ndt;it++){
+//     if(lrow_done[it] == 0){
+//       int ill = il + nstrtl;
+//       int itt = it + nstrtt;
+      
+//       int n[3];
+//       // double xf[3], yf[3], zf[3];
+//       // double xp, yp, zp;
+//       xp = zgmid[ill][0];
+//       yp = zgmid[ill][1];
+//       zp = zgmid[ill][2];
+      
+//       for(int i=0;i<3;i++){
+//         n[i] = f2n[itt][i];
+//       }
+//       #pragma acc loop seq
+//       for(int i=0;i<3;i++){
+//         xf[i] = bgmid[n[i]][0];
+//         yf[i] = bgmid[n[i]][1];
+//         zf[i] = bgmid[n[i]][2];
+//       }
+//       row[it] = face_integral2(xf, yf, zf, xp, yp, zp);
+//     }
+//   }
+// }
+
+//   if(k == 0){
+//     // #pragma acc update host(row[0:ndt], zab[0:ndt*kparam], zaa[0:ndl*kparam]) if(use_gpu)
+//     #pragma acc update host(row[0:ndt]) if(use_gpu)
+//     return;
+//   }
+
+//   adotsub_dsm(row, zab, zaa, il, ndt, k, ndt, ndl, zau);
+//   #pragma acc parallel loop if(use_gpu) \
+//                           present(lrow_done[0:ndt], row[0:ndt]) \
+//                           firstprivate(ndt)
+//   for(it = 0; it < ndt; it++) {
+//     if (lrow_done[it] != 0) {
+//       row[it] = 0.0;
+//     }
+//   }
+//   if (use_gpu) {
+//     #pragma acc update host(row[0:ndt])
+//   }
+// }
+
+// double comp_col(
+//     double* zaa, double* zab,
+//     int ndl, int ndt, int k, int it,
+//     double* col,
+//     int nstrtl, int nstrtt,
+//     int* lrow_done,
+//     double* zau,
+//     int nofc,
+//     double zgmid[][3],
+//     int f2n[][3],
+//     double bgmid[][3],
+//     int use_gpu,
+//     int id)
+// {
+//     double xf[3], yf[3], zf[3];
+//     double t_start = 0.0, t_end = 0.0;
+
+//     /* ---- start CPU timing ---- */
+//     if (!use_gpu) {
+//         t_start = get_time1();
+//         // fprintf(stderr, "Worker %d: comp_col on CPU started.\n", id);
+//     }
+
+//     /* ---- device update ---- */
+//     if (use_gpu) {
+//         #pragma acc update device(zab[0:ndt*kparam], zaa[0:ndl*kparam], col[0:ndl], lrow_done[0:ndl])
+//     }
+
+//     /* ---- main kernel ---- */
+//     #pragma acc parallel if(use_gpu) \
+//         present(zab[0:ndt*kparam], zaa[0:ndl*kparam], \
+//                 zgmid[0:nofc][0:3], f2n[0:nofc][0:3], bgmid[0:nNode][0:3], \
+//                 col[0:ndl], lrow_done[0:ndl])
+//     {
+//         #pragma acc loop private(xf, yf, zf) \
+//                          firstprivate(ndl, it, nstrtl, nstrtt)
+//         for (int il = 0; il < ndl; il++) {
+//             if (lrow_done[il] == 0) {
+//                 int ill = il + nstrtl;
+//                 int itt = it + nstrtt;
+
+//                 double xp = zgmid[ill][0];
+//                 double yp = zgmid[ill][1];
+//                 double zp = zgmid[ill][2];
+
+//                 #pragma acc loop seq
+//                 for (int i = 0; i < 3; i++) {
+//                     int ni = f2n[itt][i];
+//                     xf[i] = bgmid[ni][0];
+//                     yf[i] = bgmid[ni][1];
+//                     zf[i] = bgmid[ni][2];
+//                 }
+//                 col[il] = face_integral2(xf, yf, zf, xp, yp, zp);
+//             }
+//         }
+//     }
+
+//     /* ---- k == 0 fast path ---- */
+//     if (k == 0) {
+//       #pragma acc update host(col[0:ndl]) if (use_gpu)
+//       if (!use_gpu) {
+//         t_end = get_time1();
+//         return t_end - t_start;
+//       } else {
+//         return 0.0;
+//       }
+//     }
+
+//     /* ---- low-rank correction ---- */
+    
+//     adotsub_dsm(col, zaa, zab, it, ndl, k, ndl, ndt, zau);
+    
+//     // adotsub_dsm(col, zaa, zab, it, ndl, k, ndl, ndt, zau);
+
+//     #pragma acc parallel loop if(use_gpu) \
+//         present(lrow_done[0:ndl], col[0:ndl])
+//     for (int il = 0; il < ndl; il++) {
+//         if (lrow_done[il] != 0) {
+//             col[il] = 0.0;
+//         }
+//     }
+
+//     if (use_gpu) {
+//         #pragma acc update host(col[0:ndl])
+//     }
+
+//     /* ---- end CPU timing ---- */
+//     if (!use_gpu) {
+//         t_end = get_time1();
+//         // fprintf(stderr, "comp_col on CPU ended. t end: %.15lf seconds, t start: %.15lf seconds.\n", t_end, t_start);
+//         return t_end - t_start;
+//     } 
+//     return 0.0;
+// }
+
+// double comp_col(double* zaa, double* zab, int ndl, int ndt, int k, int it, double* col, int nstrtl, int nstrtt, int* lrow_done, double* zau, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3], int use_gpu, int id, double col_cpu_time){
+//   double xf[3], yf[3], zf[3];
+
+//   if (use_gpu) {
+//     #pragma acc update device(zab[0:ndt*kparam], zaa[0:ndl*kparam], col[0:ndl], lrow_done[0:ndl])
+//   }
+//   // printf("worker_id=%d, use_gpu=%d, k=%d, ndl=%d, ndt=%d, nstrtl=%d, nstrtt=%d, lrow_done present: %d\n", id, use_gpu, k, ndl, ndt, nstrtl, nstrtt, acc_is_present(lrow_done, ndl * sizeof(int)));
+//   #pragma acc parallel if(use_gpu) present(zab[0:ndt*kparam], zaa[0:ndl*kparam], zgmid[0:nofc][0:3], f2n[0:nofc][0:3], bgmid[0:nNode][0:3], col[0:ndl], lrow_done[0:ndl])
+//   {
+//     #pragma acc loop private(xf, yf, zf) firstprivate(ndl, it, nstrtl, nstrtt) 
+    
+//     for (int il = 0; il < ndl; il++) {
+//       if (lrow_done[il] == 0) {
+//         int ill = il + nstrtl;
+//         int itt = it + nstrtt;
+
+//         double xp = zgmid[ill][0];
+//         double yp = zgmid[ill][1];
+//         double zp = zgmid[ill][2];
+
+//         #pragma acc loop seq 
+//         for (int i = 0; i < 3; i++) {
+//           int ni = f2n[itt][i];
+//           xf[i] = bgmid[ni][0];
+//           yf[i] = bgmid[ni][1];
+//           zf[i] = bgmid[ni][2];
+//         }
+//         col[il] = face_integral2(xf, yf, zf, xp, yp, zp);
+//       }
+//     }
+//   }
+//     // int count = ndl < 5 ? ndl : 5;  // 防止越界访问
+//     // #pragma acc parallel loop present(col[0:ndl]) firstprivate(count) if(use_gpu)
+//     // for (int i = 0; i < count; i++) {
+//     //     printf("worker_id=%d, use_gpu=%d, k=%d, ndl=%d, ndt=%d, nstrtl=%d, nstrtt=%d, col[%d] = %f\n", id, use_gpu, k, ndl, ndt, nstrtl, nstrtt, i, col[i]);
+//     // }
+    
+//   if(k == 0){
+//     // #pragma acc update host(col[0:ndl], zab[0:ndt*kparam], zaa[0:ndl*kparam]) if(use_gpu)
+//     #pragma acc update host(col[0:ndl]) if(use_gpu)
+//     return;
+//   }
+
+//   adotsub_dsm(col, zaa, zab, it, ndl, k, ndl, ndt, zau); //#pragma acc routine seq void adotsub_dsm(..)
+  
+//   int il;
+//   #pragma acc parallel loop present(lrow_done[:ndl], col[0:ndl]) firstprivate(ndl,il) if(use_gpu)
+//   for(il=0;il<ndl;il++){
+//     if(lrow_done[il] != 0){
+//       col[il] = 0.0;
+//     } 
+//   }
+//   if (use_gpu) {
+//     #pragma acc update host(col[0:ndl])
+//   }
+// }
+
+// #pragma acc routine seq
+// void comp_col(double* zaa, double* zab, int ndl, int ndt, int k, int it, double* col, int nstrtl, int nstrtt, int* lrow_done, double* zau, int nofc, double zgmid[][3], int f2n[][3], double bgmid[][3]){
+ 
+//   int il;
+
+//   for(il=0;il<ndl;il++){
+//     if(lrow_done[il] == 0){
+//       int ill = il + nstrtl;
+//       int itt = it + nstrtt;
+//       // col[il] = entry_ij(ill, itt);
+//       int n[3];
+//       double xf[3], yf[3], zf[3];
+//       double xp, yp, zp;
+//       xp = zgmid[ill][0];
+//       yp = zgmid[ill][1];
+//       zp = zgmid[ill][2];
+      
+//       for(int i=0;i<3;i++){
+//         n[i] = f2n[itt][i];
+//       }
+//       for(int i=0;i<3;i++){
+//         xf[i] = bgmid[n[i]][0];
+//         yf[i] = bgmid[n[i]][1];
+//         zf[i] = bgmid[n[i]][2];
+//       }
+//       col[il] = face_integral2(xf, yf, zf, xp, yp, zp);
+//     }
+//   }
+
+//   if(k == 0){
+//     return;
+//   }
+
+//   adotsub_dsm(col, zaa, zab, it, ndl, k, ndl, ndt, zau);
+
+//   for(il=0;il<ndl;il++){
+//     if(lrow_done[il] != 0){
+//       col[il] = 0.0;
+//     }
+//   }
+// }
+
+#pragma acc routine seq 
+int minabsvalloc_d(double* za, int nd){
+  int il = 0;
+  double zz = fabs(za[0]);
+  int it;
+  for(it=1;it<nd;it++){
+    if(fabs(za[it]) < zz){
+      il = it;
+      zz = fabs(za[it]);
+    }
+  }
+  return il;
+}
+
+#pragma acc routine seq
+int maxabsvalloc_d(double* za, int nd){
+  int il = 0;
+  double zz = 0.0;
+  int it;
+  for(it=0;it<nd;it++){
+    if(fabs(za[it]) > zz){
+      il = it;
+      zz = fabs(za[it]);
+    }
+  }
+  return il;
+}
+
+#pragma acc routine seq
+double entry_ij(int i, int j){
+  int il;
+  int n[3];
+  double xf[3], yf[3], zf[3];
+  double xp, yp, zp;
+
+  xp = zgmid[i][0];
+  yp = zgmid[i][1];
+  zp = zgmid[i][2];
+  
+  for(il=0;il<3;il++){
+    n[il] = f2n[j][il];
+  }
+  for(il=0;il<3;il++){
+    xf[il] = bgmid[n[il]][0];
+    yf[il] = bgmid[n[il]][1];
+    zf[il] = bgmid[n[il]][2];
+  }
+
+  double result = face_integral2(xf, yf, zf, xp, yp, zp);
+
+  return result;
+}
+
+#pragma acc routine seq
+double face_integral2(double xs[], double ys[], double zs[], double x, double y, double z){
+  int il;
+  double PI = 3.1415927;
+  double EPSILON_0 = 8.854188 * 1e-12;
+
+  double r[3];
+  double xi, xj, yi, dx, dy, t, l, m, d, ti, tj;
+  double theta, omega, q, g, zp, zpabs;
+
+  int i, j;
+  // double *u, *v, *w;
+  double u[3],v[3],w[3];
+  double ox, oy, oz;
+
+  for(il=0;il<3;il++){
+    r[il] = sqrt( pow((xs[il] - x),2.0) + pow((ys[il] - y),2.0) + pow((zs[il] - z),2.0) );
+  }
+
+  u[0] = xs[1] - xs[0];
+  u[1] = ys[1] - ys[0];
+  u[2] = zs[1] - zs[0];
+
+  v[0] = xs[2] - xs[1];
+  v[1] = ys[2] - ys[1];
+  v[2] = zs[2] - zs[1];
+  
+  cross_product(u, v, w);
+  
+  double dw = sqrt( dot_product(w,w,3));
+  for(il=0;il<3;il++){
+    w[il] = w[il] / dw;
+  }
+  u[0] = x - xs[0];
+  u[1] = y - ys[0];
+  u[2] = z - zs[0];
+  zp = dot_product(u,w,3);
+  
+  ox = x - zp * w[0];
+  oy = y - zp * w[1];
+  oz = z - zp * w[2];
+  zpabs = fabs(zp);
+
+  double face_integral = 0.0;
+  for(i=0;i<3;i++){
+    j = (i + 1) % 3;
+    u[0] = xs[j] - ox;
+    u[1] = ys[j] - oy;
+    u[2] = zs[j] - oz;
+    xj = sqrt( dot_product(u,u,3) );
+
+    for(il=0;il<3;il++){
+      u[il] = u[il] / xj;
+    }
+    cross_product(w, u, v);
+    xi = (xs[i] - ox) * u[0] + (ys[i] - oy) * u[1] + (zs[i] - oz) * u[2];
+    yi = (xs[i] - ox) * v[0] + (ys[i] - oy) * v[1] + (zs[i] - oz) * v[2];
+
+    dx = xj - xi;
+    dy = - yi;
+    t = sqrt ((dx*dx) + (dy*dy));
+    l = dx / t;
+    m = dy / t;
+    d = (l * yi) - (m * xi);
+    ti = (l * xi) + (m * yi);
+    tj = l * xj;
+
+    theta = atan2(yi, xi);
+    omega = theta - atan2( r[i] * d, zpabs * ti ) + atan2( r[j] * d, zpabs * tj );
+    q = log( (r[j] + tj) / (r[i] + ti) );
+    g = d * q - zpabs * omega;
+    face_integral = face_integral + g;
+  }
+  
+  return fabs(face_integral) / (4.0 * PI * EPSILON_0);
+  // return 0.0;
+
+}
+
+#pragma acc routine seq
+void cross_product(double* u, double* v, double* w){
+  w[0] = u[1] * v[2] - u[2] * v[1];
+  w[1] = u[2] * v[0] - u[0] * v[2];
+  w[2] = u[0] * v[1] - u[1] * v[0];
+}
+
+// 用来逐步消去矩阵中的低秩近似部分，
+// 对每个 il ∈ [0, ndl-1]，进行矩阵 zaa 的第 it 行和 zab 的第 it 行第 im 列相乘求和，累加到 zau[il] 中。
+#pragma acc routine seq
+void adotsub_dsm(double* zr, double* zaa, double* zab, int it, int ndl, int ndt, int mdl, int mdt, double* zau){
+  int il;
+  // double* zau = (double*)calloc(ndl,sizeof(double));
+
+  adot_dsm(zau,zaa,zab,it,ndl,ndt,mdl,mdt);
+  for(il=0;il<ndl;il++){
+    zr[il] = zr[il] - zau[il];
+  }
+  // free(zau);
+}
+
+// 构建一个近似基的向量
+#pragma acc routine seq
+void adot_dsm(double* zau, double* zaa, double* zab, int im, int ndl, int ndt, int mdl, int mdt){
+  int it,il;
+  double (*zaa2)[mdl];
+  double (*zab2)[mdt];
+  zaa2 = (double(*)[mdl])zaa;
+  zab2 = (double(*)[mdt])zab;
+  for(it=0;it<ndt;it++){
+    for(il=0;il<ndl;il++){
+      zau[il] = zau[il] + zaa2[it][il] * zab2[it][im];
+    }
+  }
+}
+
+#pragma acc routine seq
+double dot_product(double* v, double* u, int n){
+  double result1 = 0.0;
+  int i;
+  for (i = 0; i < n; i++){
+    result1 += v[i] * u[i];
+  }
+  return result1;
+}
+
+#pragma acc routine seq
+int max(int a, int b){
+  if(a >= b){
+    return a;
+  }
+  return b;
+}
+
+// #pragma acc routine seq
+// int min(int a, int b){
+//   if(a <= b){
+//     return a;
+//   }
+//   return b;
+// }
+
+double dist_2cluster(int st_cltl,int st_cltt){
+  double zs = 0.0;
+  int id;
+  for(id=0;id<resultCTlist[st_cltl].ndim;id++){
+    if(resultCTlist[st_cltl].bmax[id] < resultCTlist[st_cltt].bmin[id]){
+      zs = zs + (resultCTlist[st_cltt].bmin[id] - resultCTlist[st_cltl].bmax[id]) * (resultCTlist[st_cltt].bmin[id] - resultCTlist[st_cltl].bmax[id]);
+    }else if(resultCTlist[st_cltt].bmax[id]< resultCTlist[st_cltl].bmin[id]){
+      zs = zs+ (resultCTlist[st_cltl].bmin[id] - resultCTlist[st_cltt].bmax[id]) * (resultCTlist[st_cltl].bmin[id] - resultCTlist[st_cltt].bmax[id]);
+    }
+  }
+  return sqrt(zs);
+}
+
+int create_cluster(int ndpth,int nstrt,int nsize,int ndim,int nson){
+  int st_clt;
+  st_clt = countCT;
+  countCT++;
+  resultCTlist[st_clt].nstrt = nstrt;
+  resultCTlist[st_clt].nsize = nsize;
+  resultCTlist[st_clt].ndim = ndim;
+  resultCTlist[st_clt].nnson = nson;
+  resultCTlist[st_clt].ndpth = ndpth;
+
+  return st_clt;
+}
+
+int create_ctree_ssgeom(int st_clt,   //the current node
+			      double (*zgmid)[3],     //coordination of objects
+            int (*face2node)[3],
+			      int ndpth,         //depth of the tree
+			      int ndscd,
+			      int nsrt,          //the start index of list
+			      int nd,            //the length of list
+			      int md,            //number of data
+			      int ndim){
+  int id,il,nson;
+  // double minsz = 50.0;
+  double minsz = 100.0;
+  double zcoef = 1.1;
+  double zlmin[ndim],zlmax[ndim];
+  ndpth = ndpth + 1;
+  
+  if(nd <= minsz){
+    nson = 0;
+    st_clt = create_cluster(ndpth,nsrt,nd,ndim,nson);
+  }else{
+    for(id=0;id<ndim;id++){
+      zlmin[id] = zgmid[0][id];
+      zlmax[id] = zlmin[id];
+      for(il=1;il<nd;il++){
+	      double zg = zgmid[il][id];
+        if(zg < zlmin[id]){
+          zlmin[id] = zg;
+        }else if(zlmax[id] < zg){
+          zlmax[id] = zg;
+        }
+      }
+    }
+    double zdiff = zlmax[0] - zlmin[0];
+    int ncut = 0;
+    for(id=0;id<ndim;id++){
+      double zidiff = zlmax[id]-zlmin[id];
+      if(zidiff > zcoef * zdiff){
+        zdiff = zidiff;
+        ncut = id;
+      }
+    }
+    double zlmid = 0.5 * (zlmax[ncut] + zlmin[ncut]);
+    int nl = 0;
+    int nr = nd-1;
+    while(nl < nr){
+      while(nl < nd && zgmid[nl][ncut] <= zlmid){
+        nl = nl + 1;
+      }
+      while(nr >= 0 && zgmid[nr][ncut] > zlmid){
+        nr = nr - 1;
+      }
+      if(nl < nr){
+        for(id=0;id<ndim;id++){
+          double nh = zgmid[nl][id];
+          zgmid[nl][id] = zgmid[nr][id];
+          zgmid[nr][id] = nh;
+        }
+        for(id=0;id<ndim;id++){
+          int mh = face2node[nl][id];
+          face2node[nl][id] = face2node[nr][id];
+          face2node[nr][id] = mh;
+        }
+      }
+    }
+    
+    if(nl == nd || nl == 0){
+      // #ifndef _OPENACC
+      // fprintf (stdout, "nl = %ld, nr = %ld\n", nl, nr);
+      // #endif
+      // printf (stdout, "nl = %ld, nr = %ld\n", nl, nr);
+      nson = 0;
+      st_clt = create_cluster(ndpth,nsrt,nd,ndim,nson);
+    }else{
+      nson = 2;
+      st_clt = create_cluster(ndpth,nsrt,nd,ndim,nson);
+      int nsrt1 = nsrt;
+      int nd1 = nl;
+      resultCTlist[st_clt].offsets[0] = create_ctree_ssgeom(resultCTlist[st_clt].offsets[0],zgmid,face2node,
+					       ndpth,ndscd,nsrt1,nd1,md,ndim);
+
+      nsrt1 = nsrt + nl;
+      nd1 = nd - nl;
+      resultCTlist[st_clt].offsets[1] = create_ctree_ssgeom(resultCTlist[st_clt].offsets[1],&zgmid[nl],&face2node[nl],
+					       ndpth,ndscd,nsrt1,nd1,md,ndim);
+    }
+  }
+  resultCTlist[st_clt].ndscd = nd;
+  //bounding box
+  double zeps = 1.0e-5;
+  if(resultCTlist[st_clt].nnson > 0){
+    for(id=0;id<ndim;id++){
+      resultCTlist[st_clt].bmin[id] = resultCTlist[resultCTlist[st_clt].offsets[0]].bmin[id];
+      resultCTlist[st_clt].bmax[id] = resultCTlist[resultCTlist[st_clt].offsets[0]].bmax[id];
+    }
+    for(il=1;il<resultCTlist[st_clt].nnson;il++){
+      for(id=0;id<ndim;id++){
+	      if(resultCTlist[resultCTlist[st_clt].offsets[il]].bmin[id] < resultCTlist[st_clt].bmin[id]){
+	        resultCTlist[st_clt].bmin[id] = resultCTlist[resultCTlist[st_clt].offsets[il]].bmin[id];
+	      }
+	      if(resultCTlist[st_clt].bmax[id] < resultCTlist[resultCTlist[st_clt].offsets[il]].bmax[id]){
+	        resultCTlist[st_clt].bmax[id] = resultCTlist[resultCTlist[st_clt].offsets[il]].bmax[id];
+	      }
+      }
+    }
+  }else{
+    for(id=0;id<ndim;id++){
+      resultCTlist[st_clt].bmin[id] = zgmid[0][id];
+      resultCTlist[st_clt].bmax[id] = zgmid[0][id];
+    }
+    for(id=0;id<ndim;id++){
+      for(il=1;il<resultCTlist[st_clt].nsize;il++){
+	      if(zgmid[il][id] < resultCTlist[st_clt].bmin[id]){
+	        resultCTlist[st_clt].bmin[id] = zgmid[il][id];
+	      }
+	      if(resultCTlist[st_clt].bmax[id] < zgmid[il][id]){
+	        resultCTlist[st_clt].bmax[id] = zgmid[il][id];
+	      }
+      }
+    }
+  }
+  double zwdth = (resultCTlist[st_clt].bmax[0] - resultCTlist[st_clt].bmin[0]) * (resultCTlist[st_clt].bmax[0] - resultCTlist[st_clt].bmin[0]);
+  for(id=1;id<ndim;id++){
+    zwdth = zwdth + (resultCTlist[st_clt].bmax[id] - resultCTlist[st_clt].bmin[id]) * (resultCTlist[st_clt].bmax[id] - resultCTlist[st_clt].bmin[id]);
+  }
+  zwdth = sqrt(zwdth);
+  for(id=0;id<ndim;id++){
+    double bdiff = resultCTlist[st_clt].bmax[id] - resultCTlist[st_clt].bmin[id];
+    if(bdiff < zeps * zwdth){
+      resultCTlist[st_clt].bmax[id] = resultCTlist[st_clt].bmax[id] + 0.5 * (zeps * zwdth - bdiff);
+      resultCTlist[st_clt].bmin[id] = resultCTlist[st_clt].bmin[id] - 0.5 * (zeps * zwdth - bdiff);
+    }
+  }
+  zwdth = (resultCTlist[st_clt].bmax[0] - resultCTlist[st_clt].bmin[0]) * (resultCTlist[st_clt].bmax[0] - resultCTlist[st_clt].bmin[0]);
+  for(id=1;id<ndim;id++){
+    zwdth += (resultCTlist[st_clt].bmax[id] - resultCTlist[st_clt].bmin[id]) * (resultCTlist[st_clt].bmax[id] - resultCTlist[st_clt].bmin[id]);
+  }
+  resultCTlist[st_clt].zwdth = sqrt(zwdth);
+  //end of bounding box
+  return st_clt;
+}
+
+
+void print_call_stats() {
+  printf("Dense matrix fill statistics:\n");
+  printf("Total dense calls: %d\n", call_stats.total_dense_calls);
+  printf("GPU executions: %d (%.1f%%)\n", 
+        call_stats.gpu_executions,
+        (float)call_stats.gpu_executions/call_stats.total_dense_calls*100);
+  printf("CPU executions: %d (%.1f%%)\n",
+        call_stats.cpu_executions,
+        (float)call_stats.cpu_executions/call_stats.total_dense_calls*100);
+  printf("Total GPU time: %.3f sec\n", call_stats.gpu_time);
+  printf("Total CPU time: %.3f sec\n", call_stats.cpu_time);
+  
+  // 计算未统计比例（应为0）
+  int unaccounted = call_stats.total_dense_calls - 
+                   (call_stats.gpu_executions + call_stats.cpu_executions);
+  if (unaccounted != 0) {
+      printf("Warning: %d calls not accounted (%.1f%%)\n",
+            unaccounted, (float)unaccounted/call_stats.total_dense_calls*100);
+  }
+}
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//   if (use_gpu) {
+//     #pragma acc update device(x[0:n]) 
+//   }
+//     double norm = 0.0;
+//     #pragma acc parallel loop if(use_gpu) \
+//                 present(x[0:n]) \
+//                 reduction(+:norm)
+//     for (int i = 0; i < n; i++) {
+//         norm += x[i * incx] * x[i * incx];
+//     }
+//     return sqrt(norm);
+// }
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//     // double norm = 0.0;
+//     return cblas_dnrm2(n, x, incx);
+// }
+
+// double simple_dnrm2_cublas(int n, const double *x_d, int incx, cublasHandle_t handle) {
+//     double result;
+//     cublasDnrm2(handle, n, x_d, incx, &result);
+//     return result;
+// }
+
+// #include <stdio.h>
+// #include <stdlib.h>
+// #include <math.h>
+// #include <cuda_runtime.h>
+// #include <cublas_v2.h>
+// #include <cblas.h>
+// // 计算2范数，GPU优先，失败回退CPU
+
+// void init_cublas() {
+//     if (g_cublas_handle == NULL) {
+//         cublasCreate(&g_cublas_handle);
+//     }
+// }
+
+// void cleanup_cublas() {
+//     if (g_cublas_handle != NULL) {
+//         cublasDestroy(g_cublas_handle);
+//         g_cublas_handle = NULL;
+//     }
+// }
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//   if (use_gpu && n > 5000) { 
+//     double result = 0.0;
+//     #pragma acc update device(x[0:n]) 
+//     double *d_x = (double*) acc_deviceptr(x);
+//     cublasDnrm2(g_cublas_handle, n, d_x, incx, &result);
+//     fprintf(stderr, "CUBLAS dnrm2 called: n=%d, incx=%d, result=%f\n", n, incx, result); 
+//     // test if the result is right
+//     if (fabs(result - cblas_dnrm2(n, x, incx)) > 1e-5) {
+//       fprintf(stderr, "CUBLAS dnrm2 returned error:g=%f vs c=%f\n", result, cblas_dnrm2(n, x, incx));
+//     }
+//     return result;
+//   }
+//   // CPU版本 fallback，调用 CPU BLAS（如OpenBLAS、MKL）dnrm2
+//   return cblas_dnrm2(n, x, incx);
+// }
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//   if (use_gpu) {
+//     #pragma acc update device(x[0:n]) 
+//   }
+//     double norm = 0.0;
+//     #pragma acc parallel loop if(use_gpu) \
+//                 present(x[0:n]) \
+//                 reduction(+:norm)
+//     for (int i = 0; i < n; i++) {
+//         norm += x[i * incx] * x[i * incx];
+//     }
+//     return sqrt(norm);
+// }
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//   return cblas_dnrm2(n, x, incx);
+// }
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//   if (use_gpu) { 
+//     const int test_loops = 1;
+//     double t_start = get_time();
+//     double norm = 0.0;
+//     #pragma acc parallel loop if(use_gpu) \
+//                 present(x[0:n]) \
+//                 reduction(+:norm)
+//     for (int i = 0; i < n; i++) {
+//         norm += x[i * incx] * x[i * incx];
+//     }
+    
+//     double t_gpu = get_time() - t_start;
+
+//     t_start = get_time();
+//     for (int i = 0; i < test_loops; i++) {
+//       cblas_dnrm2(n, x, incx);
+//     }
+//     double t_cpu = get_time() - t_start;
+
+//     fprintf(stderr,"n=%d: GPU=%fms CPU=%fms Speedup=%fx\n",
+//             n, t_gpu*1000, t_cpu*1000, t_cpu/t_gpu);
+
+//     // if(fabs(t_cpu - t_gpu) < 1e-5){
+//     //   fprintf(stderr,"close, n=%d, result=%f\n",n, result);
+//     // }
+
+//     if(t_cpu - t_gpu > 0){
+//       fprintf(stderr,"close, n=%d\n",n);
+//     }
+//     return sqrt(norm);
+//   }
+//   // CPU版本 fallback，调用 CPU BLAS（如OpenBLAS、MKL）dnrm2
+//   return cblas_dnrm2(n, x, incx);
+// }
+
+// double simple_dnrm2(int n, const double *x, int incx, int use_gpu) {
+//   if (use_gpu) { 
+//     const int test_loops = 3;
+//     double t_start = get_time();
+//     double result = 0.0;
+//     for (int i = 0; i < test_loops; i++) {
+//       #pragma acc update device(x[0:n]) 
+//       double *d_x = (double*) acc_deviceptr(x);
+//       cublasDnrm2(g_cublas_handle, n, d_x, incx, &result);
+//     }
+//     double t_gpu = get_time() - t_start;
+
+//     t_start = get_time();
+//     for (int i = 0; i < test_loops; i++) {
+//       cblas_dnrm2(n, x, incx);
+//     }
+//     double t_cpu = get_time() - t_start;
+
+//     fprintf(stderr,"n=%d: GPU=%fms CPU=%fms Speedup=%fx\n",
+//             n, t_gpu*1000, t_cpu*1000, t_cpu/t_gpu);
+
+//     // if(fabs(t_cpu - t_gpu) < 1e-5){
+//     //   fprintf(stderr,"close, n=%d, result=%f\n",n, result);
+//     // }
+
+//     if(t_cpu - t_gpu > 0){
+//       fprintf(stderr,"close, n=%d, result=%f\n",n, result);
+//     }
+//     return result;
+//   }
+//   // CPU版本 fallback，调用 CPU BLAS（如OpenBLAS、MKL）dnrm2
+//   return cblas_dnrm2(n, x, incx);
+// }
+
+// double get_time(){
+//   struct timeval time;
+//   if (gettimeofday(&time,NULL)){
+//     return 0;
+//   }
+//   printf("get_time: sec=%ld, usec=%ld\n", time.tv_sec, time.tv_usec);
+//   return (double)time.tv_sec + (double)time.tv_usec * .000001;
+// }
+
+
+
+double get_time1(){
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    // printf("get_time: sec=%ld, nsec=%ld, time=%f\n", ts.tv_sec, ts.tv_nsec, (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9);
+    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
+// 新版本 get_time 函数，只返回秒+纳秒
+void get_time(struct timespec *ts){
+    clock_gettime(CLOCK_MONOTONIC, ts);
+}
+
+// 计算时间差函数，返回秒（double 精度足够）
+double diff_time(const struct timespec *start, const struct timespec *end){
+    long sec_diff = end->tv_sec - start->tv_sec;
+    long nsec_diff = end->tv_nsec - start->tv_nsec;
+    // 如果纳秒差为负数，调整秒和纳秒
+    if(nsec_diff < 0){
+        sec_diff -= 1;
+        nsec_diff += 1000000000L;
+    }
+    return (double)sec_diff + (double)nsec_diff * 1e-9;
+}
