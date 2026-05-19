@@ -7,21 +7,19 @@ This project investigates hybrid CPU–GPU execution and distributed-memory para
 The project includes:
 
 * MPI-based distributed execution
-* Hybrid CPU/GPU task scheduling
+* Hybrid CPU–GPU task scheduling
 * Experimental H-matrix implementations
-* Multiple execution configurations and evaluation scripts
-* Benchmark datasets and experiment utilities
+* Evaluation and benchmark scripts
+* Benchmark datasets and utilities
 * Tascell-based task-parallel implementations
-
-The implementation is designed for research and experimental evaluation on HPC environments.
 
 ---
 
-# Directory Structure
+## Directory Structure
 
-```text
+```text id="d1p9f7"
 .
-├── bem_data/                 # BEM and H-matrix related source files and datasets
+├── bem_data/                 # BEM / H-matrix source files and datasets
 ├── hmat_*.sh                 # Experiment and execution scripts
 ├── hmat_ct_*.tcell           # Tascell implementations
 ├── Makefile                  # Build configuration
@@ -30,31 +28,23 @@ The implementation is designed for research and experimental evaluation on HPC e
 
 ---
 
-# Features
+## Features
 
-## Hybrid CPU-GPU Execution
+### Hybrid CPU–GPU Execution
 
-The framework supports multiple execution modes:
+The framework supports:
 
 * CPU-only execution
 * GPU-only execution
-* Hybrid CPU-GPU execution
+* Hybrid CPU–GPU execution
 
-Workers can dynamically execute CPU-oriented or GPU-oriented tasks depending on resource availability.
+Tasks can be dynamically scheduled to CPUs or GPUs depending on resource availability.
 
-## MPI Support
+---
 
-MPI is used for distributed-memory parallelism across multiple nodes.
+### Task Parallelism
 
-Supported configurations include:
-
-* Multi-node execution
-* Multi-process execution
-* Hybrid MPI + GPU execution
-
-## Task Parallelism
-
-The implementation is based on the Tascell task-parallel programming model.
+The implementation is based on the SC-Tascell task-parallel programming model.
 
 Features include:
 
@@ -63,36 +53,45 @@ Features include:
 * Recursive task decomposition
 * Parallel H-matrix computation
 
-## GPU Acceleration
+---
 
-GPU acceleration is implemented using:
+### GPU Acceleration
 
-* OpenACC
-* CUDA
-* NVIDIA HPC Compiler (nvc)
-
-Several computational kernels can be offloaded to GPUs for improved performance.
+GPU acceleration is implemented using OpenACC with the NVIDIA HPC Compiler (`nvc`) on CUDA-enabled NVIDIA GPUs.
 
 ---
 
-# Requirements
+## Requirements
 
-## Software
+### SC-Tascell Environment
+
+This project depends on the SC-Tascell environment and compiler toolchain.
+
+Please install: Tascell runtime environment before building this project.
+
+The implementation was tested with:
+
+```text id="j7l8l6"
+Tascell (May 15, 2022)
+```
+
+---
+
+### Software
 
 Recommended environment:
 
 * Linux
-* GCC or NVIDIA HPC Compiler (nvc)
-* MPI implementation
-
-  * OpenMPI
+* NVIDIA HPC Compiler (`nvc`)
+* OpenMPI
 * CUDA Toolkit
 * OpenACC support
+* OpenBLAS
 * Git
 
-## Hardware
+### Hardware
 
-Recommended:
+Recommended hardware:
 
 * Multi-core CPU
 * NVIDIA GPU
@@ -100,58 +99,44 @@ Recommended:
 
 ---
 
-# Build Instructions
+## Build Instructions
 
-## Clone Repository
+### Clone Repository
 
-```bash
+```bash id="0w4u9q"
 git clone https://github.com/Jillxu08/sc-tascell.git
 cd sc-tascell
 ```
 
-## Build
+### Build
 
-Example build command:
+After installing the SC-Tascell environment:
 
-```bash
+```bash id="b4o0aq"
 make
 ```
 
-For NVIDIA HPC Compiler:
+The provided Makefile uses:
 
-```bash
-make CC=nvc
-```
+* MPI (`mpicc`)
+* NVIDIA HPC Compiler (`nvc`)
+* OpenACC
+* CUDA 12.2
 
-Depending on the environment, additional MPI or CUDA flags may be required.
-
----
-
-# Running Experiments
-
-## Example Execution
-
-```bash
-bash hmat_mpi.sh
-```
-
-## MPI Execution Example
-
-```bash
-mpirun -np 4 ./executable
-```
-
-## GPU Execution
-
-Example:
-
-```bash
-bash hmat_mpi.sh
-```
+Environment-specific modifications (e.g., CUDA version, GPU architecture, OpenBLAS paths, or MPI installation paths) may be required.
 
 ---
 
-# Benchmark Datasets
+## Running Experiments
+
+### Example Execution
+
+```bash id="9xyrt5"
+bash hmat_mpi.sh
+```
+---
+
+## Benchmark Datasets
 
 Datasets used in experiments include:
 
@@ -162,25 +147,24 @@ Datasets used in experiments include:
 
 Input files are located in:
 
-```text
+```text id="n5mhdg"
 bem_data/
 ```
 
 ---
 
-# Research Focus
+## Research Focus
 
 This project investigates:
 
-* Efficient utilization of heterogeneous CPU-GPU systems
+* Efficient utilization of heterogeneous CPU–GPU systems
 * Hybrid task scheduling strategies
 * Distributed H-matrix computation
-* Dynamic load balancing for irregular workloads
 * Performance scalability on HPC systems
 
 ---
 
-# Experimental Environment
+## Experimental Environment
 
 The implementation has been tested on:
 
@@ -194,12 +178,11 @@ Compiler environments include:
 
 ---
 
-# Notes
+## Notes
 
-This repository is primarily intended for:
+This repository is intended for:
 
 * Research experiments
-* Performance evaluation
 * HPC system studies
 * Hybrid parallel programming research
 
@@ -207,7 +190,7 @@ Some scripts and implementations are experimental and may require environment-sp
 
 ---
 
-# Future Work
+## Future Work
 
 Potential future improvements include:
 
@@ -219,20 +202,22 @@ Potential future improvements include:
 
 ---
 
-# Citation
+## Citation
 
+```bibtex id="y1t1ez"
 @inproceedings{xu2026hmatrix,
-  author = {Xu, Jing and Hiraishi, Tasuku and Bai, Zhengyang and Ida, Akihiro and Yasugi, Masahiro and Iwashita, Takeshi},
-  title = {Multi-node CPU-GPU H-Matrix Generation Using a Backtracking-based Load Balancing Framework},
+  author    = {Jing Xu and Tasuku Hiraishi and Zhengyang Bai and Akihiro Ida and Masahiro Yasugi and Takeshi Iwashita},
+  title     = {Multi-node CPU-GPU H-Matrix Generation Using a Backtracking-based Load Balancing Framework},
   booktitle = {H3 Workshop (ISC 2026)},
-  year = {2026}
+  year      = {2026}
 }
+```
+
 ---
 
-# Contact
+## Contact
 
 Maintainer: Jing Xu
 
 GitHub Repository:
-
-[https://github.com/Jillxu08/sc-tascell](https://github.com/Jillxu08/sc-tascell)
+[Jillxu08/sc-tascell](https://github.com/Jillxu08/sc-tascell?utm_source=chatgpt.com)
