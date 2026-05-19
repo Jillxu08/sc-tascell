@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project researchs the hybrid CPU-GPU execution and distributed-memory parallelism for H-matrix related computations based on the SC-Tascell framework. The implementation integrates MPI, task parallelism, and GPU acceleration to improve scalability and resource utilization on modern heterogeneous systems.
+This project investigates hybrid CPU–GPU execution and distributed-memory parallelism for H-matrix computations based on the SC-Tascell framework. The implementation integrates MPI, task parallelism, and GPU acceleration to improve scalability and resource utilization on modern heterogeneous systems.
 
 The project includes:
 
